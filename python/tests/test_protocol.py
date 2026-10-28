@@ -137,7 +137,8 @@ def test_structured_file_errors_preserve_existing_files(tmp_path, failure):
     assert output.read_text() == "existing output"
 
 
-def test_converter_diagnostics_and_exceptions_never_leak(tmp_path):
+@pytest.mark.parametrize("fails", [False, True])
+def test_converter_diagnostics_and_exceptions_never_leak(tmp_path, fails):
     source = tmp_path / "source.txt"
     source.write_text("private document")
     conversion = request(
@@ -146,24 +147,59 @@ def test_converter_diagnostics_and_exceptions_never_leak(tmp_path):
     discovery = request()
     process = run_worker(
         [json.dumps(conversion), json.dumps(discovery)],
-        script="""
+        script=f"fails = {fails!r}\n"
+        + r"""
+import os
 import sys
+from types import SimpleNamespace
 from markitdown import MarkItDown
 from document_worker.main import main
 def fail(*args, **kwargs):
     print('private document')
     print('private document', file=sys.stderr)
-    raise RuntimeError('private document')
+    os.write(1, b'NATIVE_STDOUT_SECRET\n')
+    os.write(2, b'NATIVE_STDERR_SECRET\n')
+    if fails:
+        raise RuntimeError('private document')
+    return SimpleNamespace(text_content='converted')
 MarkItDown.convert_local = fail
 main()
+os.write(1, b'{"restored":true}\n')
+os.write(2, b'descriptors restored\n')
+""",
+    )
+    assert process.returncode == 0
+    assert "NATIVE_STDOUT_SECRET" not in process.stdout + process.stderr
+    assert "NATIVE_STDERR_SECRET" not in process.stdout + process.stderr
+    assert process.stderr == "descriptors restored\n"
+    assert "private document" not in process.stdout
+    assert "Traceback" not in process.stdout
+    events = [json.loads(line) for line in process.stdout.splitlines()]
+    assert events[-1] == {"restored": True}
+    assert events[-3]["id"] == conversion["id"]
+    assert events[-3]["status"] == ("error" if fails else "success")
+    if fails:
+        assert events[-3]["error_code"] == "processing_failed"
+    assert events[-2]["id"] == discovery["id"]
+    assert (tmp_path / "source.md").exists() is not fails
+
+
+def test_protocol_handle_remains_writable_while_descriptors_are_redirected():
+    discovery = request()
+    process = run_worker(
+        [json.dumps(discovery)],
+        script="""
+import document_worker.main as worker
+original = worker.process_request
+def redirected(request):
+    with worker.quiet_conversion():
+        yield from original(request)
+worker.process_request = redirected
+worker.main()
 """,
     )
     assert process.returncode == 0
     assert process.stderr == ""
-    assert "private document" not in process.stdout
-    assert "Traceback" not in process.stdout
-    events = [json.loads(line) for line in process.stdout.splitlines()]
-    assert events[-2]["id"] == conversion["id"]
-    assert events[-2]["error_code"] == "processing_failed"
-    assert events[-1]["id"] == discovery["id"]
-    assert not (tmp_path / "source.md").exists()
+    event = json.loads(process.stdout)
+    assert event["id"] == discovery["id"]
+    assert event["event"] == "formats"

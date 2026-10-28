@@ -2,7 +2,7 @@
 
 import os
 import sys
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout
 
 from document_worker.protocol import (
     RequestError,
@@ -10,6 +10,29 @@ from document_worker.protocol import (
     parse_request,
     serialize,
 )
+
+
+@contextmanager
+def quiet_conversion():
+    """Suppress Python and native writes during sequential document processing."""
+    stdout, stderr = sys.stdout, sys.stderr
+    stdout.flush()
+    stderr.flush()
+    with ExitStack() as stack:
+        quiet = stack.enter_context(open(os.devnull, "w"))
+        for descriptor in (1, 2):
+            saved = os.dup(descriptor)
+            stack.callback(os.close, saved)
+            stack.callback(os.dup2, saved, descriptor)
+            os.dup2(quiet.fileno(), descriptor)
+        stack.enter_context(redirect_stdout(quiet))
+        stack.enter_context(redirect_stderr(quiet))
+        try:
+            yield
+        finally:
+            # Flush references to the original Python streams before restoring FDs.
+            stdout.flush()
+            stderr.flush()
 
 
 def process_request(request):
@@ -44,7 +67,7 @@ def process_request(request):
         return
     yield {"id": request.id, "event": "progress", "percent": 0}
     # Third-party output can contain sensitive data. Discard it, including on failure.
-    with open(os.devnull, "w") as quiet, redirect_stdout(quiet), redirect_stderr(quiet):
+    with quiet_conversion():
         from markitdown import MarkItDown
         from markitdown.converters import PlainTextConverter
 
@@ -80,20 +103,26 @@ def main():
     # UTF-8 is fixed on both Windows and macOS, independent of the system locale.
     sys.stdin.reconfigure(encoding="utf-8")
     sys.stdout.reconfigure(encoding="utf-8")
+    # This duplicated handle stays attached to the protocol pipe during redirection.
+    with os.fdopen(os.dup(1), "w", encoding="utf-8") as protocol:
+        run_protocol(protocol)
+
+
+def run_protocol(protocol):
     for line in sys.stdin:
         request_id = None
         try:
             request = parse_request(line)
             request_id = request.id
             for message in process_request(request):
-                sys.stdout.write(serialize(message))
-                sys.stdout.flush()
+                protocol.write(serialize(message))
+                protocol.flush()
         except RequestError as error:
-            sys.stdout.write(
+            protocol.write(
                 serialize(error_result(error.request_id, error.code, error.message))
             )
         except Exception:  # noqa: BLE001 - isolate each file and never expose library exceptions
-            sys.stdout.write(
+            protocol.write(
                 serialize(
                     error_result(
                         request_id,
@@ -102,7 +131,7 @@ def main():
                     )
                 )
             )
-        sys.stdout.flush()
+        protocol.flush()
 
 
 if __name__ == "__main__":

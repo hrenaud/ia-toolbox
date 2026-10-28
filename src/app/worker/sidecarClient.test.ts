@@ -201,3 +201,41 @@ it("rejects an uncorrelated event rather than leaving requests pending", async (
   emit({ id: crypto.randomUUID(), event: "formats", items: [] });
   await check;
 });
+
+it("surfaces a safe stop failure and permits retry", async () => {
+  const client = await SidecarClient.start();
+  mock.kill.mockRejectedValueOnce(new Error("sensitive process details"));
+  await expect(client.stop()).rejects.toMatchObject({
+    code: "worker_stop_failed",
+    message: "worker_stop_failed",
+  });
+  await expect(client.stop()).resolves.toBeUndefined();
+  expect(mock.kill).toHaveBeenCalledTimes(2);
+  await client.stop();
+  expect(mock.kill).toHaveBeenCalledTimes(2);
+});
+
+it("can stop again after automatic cleanup fails", async () => {
+  const client = await SidecarClient.start();
+  mock.kill.mockRejectedValueOnce(new Error("sensitive process details"));
+  const pending = client.request({ operation: "list_formats" });
+  const failed = expect(pending).rejects.toMatchObject({
+    code: "invalid_response",
+  });
+  mock.stdout?.("invalid JSON");
+  await failed;
+  await expect(client.stop()).resolves.toBeUndefined();
+  expect(mock.kill).toHaveBeenCalledTimes(2);
+});
+
+it("reports startup cleanup failure without exposing process details", async () => {
+  mock.spawn.mockImplementationOnce(async () => {
+    mock.close?.();
+    return { write: mock.write, kill: mock.kill };
+  });
+  mock.kill.mockRejectedValueOnce(new Error("sensitive process details"));
+  await expect(SidecarClient.start()).rejects.toMatchObject({
+    code: "worker_stop_failed",
+    message: "worker_stop_failed",
+  });
+});

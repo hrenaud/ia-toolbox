@@ -27,7 +27,10 @@ type WorkerEvent =
 export class WorkerError extends Error {
   constructor(
     public readonly code:
-      "invalid_response" | "worker_stopped" | "worker_unavailable",
+      | "invalid_response"
+      | "worker_stopped"
+      | "worker_unavailable"
+      | "worker_stop_failed",
   ) {
     super(code);
     this.name = "WorkerError";
@@ -98,7 +101,7 @@ export class SidecarClient {
       client.fail("worker_unavailable");
     }
     if (client.failure) {
-      await client.child?.kill().catch(() => undefined);
+      await client.terminate();
       throw client.failure;
     }
     return client;
@@ -135,7 +138,22 @@ export class SidecarClient {
 
   async stop(): Promise<void> {
     this.fail("worker_stopped");
-    await this.termination;
+    await this.terminate();
+  }
+
+  private terminate(): Promise<void> {
+    if (this.termination) return this.termination;
+    if (!this.child) return Promise.resolve();
+    this.termination = this.child.kill().then(
+      () => {
+        this.child = undefined;
+      },
+      () => {
+        this.termination = undefined;
+        throw new WorkerError("worker_stop_failed");
+      },
+    );
+    return this.termination;
   }
 
   private receive(line: string): void {
@@ -176,6 +194,8 @@ export class SidecarClient {
     this.failure = new WorkerError(code);
     for (const pending of this.pending.values()) pending.reject(this.failure);
     this.pending.clear();
-    this.termination = this.child?.kill().catch(() => undefined);
+    // Event handlers cannot await cleanup. Keep its rejection observable to stop(),
+    // while preventing an unhandled rejection when failure arrived asynchronously.
+    void this.terminate().catch(() => undefined);
   }
 }
