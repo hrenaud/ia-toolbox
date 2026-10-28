@@ -1,0 +1,7 @@
+pnpm-lock.yaml
+src-tauri/
+superpowers/
+AGENTS.md
+LICENSE
+dist/
+node_modules/

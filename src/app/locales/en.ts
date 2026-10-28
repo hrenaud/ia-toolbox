@@ -1,0 +1,26 @@
+export const en = {
+  appName: "IA Toolbox",
+  tagline: "Your documents, on your computer",
+  skip: "Skip to content",
+  workflows: "Document tools",
+  convert: "Convert to Markdown",
+  anonymize: "Anonymize documents",
+  convertDescription:
+    "Turn documents into readable Markdown for your notes and writing.",
+  anonymizeDescription:
+    "Review personal information and create an anonymized copy of your documents.",
+  unavailable: "Document processing is not available in this version yet.",
+  local: "Designed for local processing",
+  privacy: "Your documents stay on your computer.",
+  settings: "Settings",
+  preferences: "Choose your language and appearance.",
+  language: "Language",
+  appearance: "Appearance",
+  system: "System",
+  english: "English",
+  french: "Français",
+  light: "Light",
+  dark: "Dark",
+  close: "Close settings",
+  saved: "Changes are saved on this computer.",
+};
