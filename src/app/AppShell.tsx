@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ConversionPage } from "../features/conversion/ConversionPage";
 import { dictionaries, getInitialLocale, type Locale } from "./i18n";
 import { loadSettings, saveSettings, type Settings } from "./settings";
 import { getTheme, type ThemePreference } from "./theme";
@@ -85,9 +86,13 @@ export function AppShell() {
               ? t.convertDescription
               : t.anonymizeDescription}
           </p>
-          <div className="status-card" role="status">
-            <p>{t.unavailable}</p>
-          </div>
+          {workflow === "convert" ? (
+            <ConversionPage />
+          ) : (
+            <div className="status-card" role="status">
+              <p>{t.unavailable}</p>
+            </div>
+          )}
           <p className="privacy">{t.privacy}</p>
         </main>
       </div>

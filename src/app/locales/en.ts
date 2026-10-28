@@ -23,4 +23,35 @@ export const en = {
   dark: "Dark",
   close: "Close settings",
   saved: "Changes are saved on this computer.",
+  // Conversion page
+  "conversion.formatLoadError":
+    "Failed to load supported formats. Please restart the app.",
+  "conversion.outputSelectError": "Failed to select output folder.",
+  "conversion.outputRequired":
+    "Please select an output folder before converting.",
+  "conversion.noSupportedFiles": "No supported files selected for conversion.",
+  "conversion.unknownError": "An unexpected error occurred during conversion.",
+  "conversion.selectFiles": "Select files",
+  "conversion.dragHint": "or drag files here",
+  "conversion.supportedFormats": "Supported formats",
+  "conversion.selectedFiles": "Selected files",
+  "conversion.unsupported": "Unsupported",
+  "conversion.requiresOcr": "Requires OCR (not available)",
+  "conversion.unsupportedWarning":
+    "file(s) have unsupported format and will be skipped.",
+  "conversion.ocmInfo":
+    "file(s) require OCR, which is not available in this version.",
+  "conversion.changeOutput": "Change output folder",
+  "conversion.selectOutput": "Select output folder",
+  "conversion.outputPath": "Output: ",
+  "conversion.outputHelp":
+    "Output files will be named originalname.md. If a file already exists, a numbered suffix like originalname (2).md is used automatically.",
+  "conversion.convert": "Convert",
+  "conversion.converting": "Converting...",
+  "conversion.clearSelection": "Clear selection",
+  "conversion.progress": "Progress",
+  "conversion.queued": "Queued",
+  "conversion.running": "Running",
+  "conversion.success": "Success",
+  "conversion.error": "Error",
 };
