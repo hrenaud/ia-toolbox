@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import { SidecarClient } from "./sidecarClient";
+import { SidecarClient, WorkerStartupError } from "./sidecarClient";
 
 const mock = vi.hoisted(() => ({
   stdout: undefined as ((line: string) => void) | undefined,
@@ -234,8 +234,15 @@ it("reports startup cleanup failure without exposing process details", async () 
     return { write: mock.write, kill: mock.kill };
   });
   mock.kill.mockRejectedValueOnce(new Error("sensitive process details"));
-  await expect(SidecarClient.start()).rejects.toMatchObject({
+  const error = await SidecarClient.start().catch((error: unknown) => error);
+  expect(error).toBeInstanceOf(WorkerStartupError);
+  expect(error).toMatchObject({
     code: "worker_stop_failed",
     message: "worker_stop_failed",
   });
+  if (!(error instanceof WorkerStartupError))
+    throw new Error("Missing cleanup handle");
+  expect(JSON.stringify(error)).not.toContain("sensitive");
+  await expect(error.cleanup()).resolves.toBeUndefined();
+  expect(mock.kill).toHaveBeenCalledTimes(2);
 });

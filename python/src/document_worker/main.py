@@ -2,7 +2,6 @@
 
 import os
 import sys
-from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout
 
 from document_worker.protocol import (
     RequestError,
@@ -12,27 +11,26 @@ from document_worker.protocol import (
 )
 
 
-@contextmanager
-def quiet_conversion():
-    """Suppress Python and native writes during sequential document processing."""
-    stdout, stderr = sys.stdout, sys.stderr
-    stdout.flush()
-    stderr.flush()
-    with ExitStack() as stack:
-        quiet = stack.enter_context(open(os.devnull, "w"))
-        for descriptor in (1, 2):
-            saved = os.dup(descriptor)
-            stack.callback(os.close, saved)
-            stack.callback(os.dup2, saved, descriptor)
-            os.dup2(quiet.fileno(), descriptor)
-        stack.enter_context(redirect_stdout(quiet))
-        stack.enter_context(redirect_stderr(quiet))
-        try:
-            yield
-        finally:
-            # Flush references to the original Python streams before restoring FDs.
-            stdout.flush()
-            stderr.flush()
+def silence_process_output():
+    """Keep ordinary output disconnected from protocol pipes until process exit."""
+    # Never restore these descriptors: native libraries may flush buffers much later.
+    with open(os.devnull, "w") as quiet:
+        os.dup2(quiet.fileno(), 1)
+        os.dup2(quiet.fileno(), 2)
+    if os.name == "nt":
+        # Windows native libraries can use Win32 standard handles instead of CRT FDs.
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.SetStdHandle.argtypes = [wintypes.DWORD, wintypes.HANDLE]
+        kernel32.SetStdHandle.restype = wintypes.BOOL
+        for identifier, descriptor in ((-11, 1), (-12, 2)):
+            if not kernel32.SetStdHandle(identifier, msvcrt.get_osfhandle(descriptor)):
+                raise OSError("Could not isolate worker output.")
+    sys.stdout = os.fdopen(os.dup(1), "w", encoding="utf-8")
+    sys.stderr = os.fdopen(os.dup(2), "w", encoding="utf-8")
 
 
 def process_request(request):
@@ -66,14 +64,13 @@ def process_request(request):
         )
         return
     yield {"id": request.id, "event": "progress", "percent": 0}
-    # Third-party output can contain sensitive data. Discard it, including on failure.
-    with quiet_conversion():
-        from markitdown import MarkItDown
-        from markitdown.converters import PlainTextConverter
+    # Output isolation is installed before importing any conversion libraries.
+    from markitdown import MarkItDown
+    from markitdown.converters import PlainTextConverter
 
-        converter = MarkItDown(enable_builtins=False, enable_plugins=False)
-        converter.register_converter(PlainTextConverter())
-        text = converter.convert_local(source).text_content
+    converter = MarkItDown(enable_builtins=False, enable_plugins=False)
+    converter.register_converter(PlainTextConverter())
+    text = converter.convert_local(source).text_content
     output = directory / f"{source.stem}.md"
     try:
         stream = output.open("x", encoding="utf-8")
@@ -105,6 +102,7 @@ def main():
     sys.stdout.reconfigure(encoding="utf-8")
     # This duplicated handle stays attached to the protocol pipe during redirection.
     with os.fdopen(os.dup(1), "w", encoding="utf-8") as protocol:
+        silence_process_output()
         run_protocol(protocol)
 
 

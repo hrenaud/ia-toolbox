@@ -171,16 +171,15 @@ os.write(2, b'descriptors restored\n')
     assert process.returncode == 0
     assert "NATIVE_STDOUT_SECRET" not in process.stdout + process.stderr
     assert "NATIVE_STDERR_SECRET" not in process.stdout + process.stderr
-    assert process.stderr == "descriptors restored\n"
+    assert process.stderr == ""
     assert "private document" not in process.stdout
     assert "Traceback" not in process.stdout
     events = [json.loads(line) for line in process.stdout.splitlines()]
-    assert events[-1] == {"restored": True}
-    assert events[-3]["id"] == conversion["id"]
-    assert events[-3]["status"] == ("error" if fails else "success")
+    assert events[-2]["id"] == conversion["id"]
+    assert events[-2]["status"] == ("error" if fails else "success")
     if fails:
-        assert events[-3]["error_code"] == "processing_failed"
-    assert events[-2]["id"] == discovery["id"]
+        assert events[-2]["error_code"] == "processing_failed"
+    assert events[-1]["id"] == discovery["id"]
     assert (tmp_path / "source.md").exists() is not fails
 
 
@@ -192,8 +191,8 @@ def test_protocol_handle_remains_writable_while_descriptors_are_redirected():
 import document_worker.main as worker
 original = worker.process_request
 def redirected(request):
-    with worker.quiet_conversion():
-        yield from original(request)
+    print('ordinary output must be suppressed')
+    yield from original(request)
 worker.process_request = redirected
 worker.main()
 """,
@@ -203,3 +202,72 @@ worker.main()
     event = json.loads(process.stdout)
     assert event["id"] == discovery["id"]
     assert event["event"] == "formats"
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_buffered_libc_output_cannot_escape_after_conversion(tmp_path, fails):
+    source = tmp_path / "source.txt"
+    source.write_text("text")
+    conversion = request(
+        "convert", input_path=str(source), output_directory=str(tmp_path)
+    )
+    process = run_worker(
+        [json.dumps(conversion)],
+        script=f"fails = {fails!r}\n"
+        + r"""
+import ctypes
+import os
+from types import SimpleNamespace
+from markitdown import MarkItDown
+from document_worker.main import main
+libc = ctypes.CDLL('ucrtbase' if os.name == 'nt' else None)
+libc.printf.argtypes = [ctypes.c_char_p]
+libc.fflush.argtypes = [ctypes.c_void_p]
+def convert(*args, **kwargs):
+    libc.printf(b'BUFFERED_LIBC_SECRET')
+    if fails:
+        raise RuntimeError('private error')
+    return SimpleNamespace(text_content='converted')
+MarkItDown.convert_local = convert
+main()
+libc.fflush(None)
+os.write(1, b'LATE_STDOUT_SECRET')
+os.write(2, b'LATE_STDERR_SECRET')
+""",
+    )
+    assert process.returncode == 0
+    assert "BUFFERED_LIBC_SECRET" not in process.stdout
+    assert process.stderr == ""
+    assert "SECRET" not in process.stdout
+    events = [json.loads(line) for line in process.stdout.splitlines()]
+    assert all(event["id"] == conversion["id"] for event in events)
+    assert events[-1]["status"] == ("error" if fails else "success")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Requires Windows standard handles")
+def test_windows_native_standard_handles_are_permanently_silenced():
+    discovery = request()
+    process = run_worker(
+        [json.dumps(discovery)],
+        script=r"""
+import ctypes
+from ctypes import wintypes
+from document_worker.main import main
+main()
+kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+kernel32.GetStdHandle.argtypes = [wintypes.DWORD]
+kernel32.GetStdHandle.restype = wintypes.HANDLE
+kernel32.WriteFile.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
+                              ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p]
+kernel32.WriteFile.restype = wintypes.BOOL
+for identifier in (-11, -12):
+    data = ctypes.create_string_buffer(b'WIN32_NATIVE_SECRET')
+    written = wintypes.DWORD()
+    if not kernel32.WriteFile(kernel32.GetStdHandle(identifier), data,
+                              len(data.value), ctypes.byref(written), None):
+        raise SystemExit(1)
+""",
+    )
+    assert process.returncode == 0
+    assert process.stderr == ""
+    assert json.loads(process.stdout)["id"] == discovery["id"]

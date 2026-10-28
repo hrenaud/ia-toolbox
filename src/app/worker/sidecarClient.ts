@@ -37,6 +37,13 @@ export class WorkerError extends Error {
   }
 }
 
+export class WorkerStartupError extends WorkerError {
+  constructor(public readonly cleanup: () => Promise<void>) {
+    super("worker_stop_failed");
+    this.name = "WorkerStartupError";
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -101,7 +108,12 @@ export class SidecarClient {
       client.fail("worker_unavailable");
     }
     if (client.failure) {
-      await client.terminate();
+      try {
+        await client.terminate();
+      } catch {
+        // Keep failed startup cleanup reachable even though start cannot return a client.
+        throw new WorkerStartupError(() => client.stop());
+      }
       throw client.failure;
     }
     return client;
