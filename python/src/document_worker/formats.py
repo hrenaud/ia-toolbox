@@ -22,6 +22,9 @@ def supported_input_formats() -> list[FormatInfo]:
     """
     return [
         FormatInfo(".txt", "Text", False),
+        FormatInfo(".text", "Text", False),
+        FormatInfo(".md", "Markdown", False),
+        FormatInfo(".markdown", "Markdown", False),
         FormatInfo(".csv", "CSV", False),
         FormatInfo(".html", "HTML", False),
         FormatInfo(".json", "JSON", False),

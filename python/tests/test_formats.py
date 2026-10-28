@@ -77,3 +77,15 @@ def test_format_labels_are_user_friendly():
         assert len(fmt.label) > 0
         # Should be capitalized
         assert fmt.label[0].isupper()
+
+
+def test_plain_text_formats_match_markitdown_constant():
+    """Catalog plain-text extensions must match MarkItDown's ACCEPTED_FILE_EXTENSIONS."""
+    from markitdown.converters._plain_text_converter import ACCEPTED_FILE_EXTENSIONS
+
+    formats = supported_input_formats()
+    catalog_exts = {fmt.extension for fmt in formats}
+
+    # All extensions from MarkItDown's PlainTextConverter should be in catalog
+    for ext in ACCEPTED_FILE_EXTENSIONS:
+        assert ext in catalog_exts, f"Missing plain-text extension {ext} from catalog"

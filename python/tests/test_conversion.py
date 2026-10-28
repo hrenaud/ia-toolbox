@@ -82,6 +82,23 @@ class TestConversionSuccess:
         content = output.read_text(encoding="utf-8")
         assert "id" in content.lower()
 
+    def test_convert_markdown_file(self, tmp_path):
+        """Convert a Markdown file to markdown (identity conversion)."""
+        source = tmp_path / "readme.md"
+        source.write_text("# Title\n\nSome **bold** text.\n", encoding="utf-8")
+
+        result = convert_file(source, tmp_path)
+
+        assert result.status == "success"
+        assert result.output_path is not None
+        output = Path(result.output_path)
+        assert output.exists()
+        assert output.suffix == ".md"
+        content = output.read_text(encoding="utf-8")
+        assert "Title" in content
+        # Source should be untouched
+        assert source.read_text() == "# Title\n\nSome **bold** text.\n"
+
     def test_output_uses_input_stem(self, tmp_path):
         """Output filename should be based on input stem with .md extension."""
         source = tmp_path / "report.txt"
@@ -249,3 +266,39 @@ class TestErrorMessages:
         finally:
             # Cleanup: restore permissions
             source.chmod(0o644)
+
+    def test_write_failed_read_only_directory(self, tmp_path):
+        """Should handle write failures (e.g., read-only output directory)."""
+        source = tmp_path / "test.txt"
+        source.write_text("content", encoding="utf-8")
+
+        # Create a read-only subdirectory to write to
+        output_dir = tmp_path / "readonly"
+        output_dir.mkdir()
+
+        result = convert_file(source, output_dir)
+        # Success before making read-only
+        assert result.status == "success"
+
+        # Now make directory read-only and try again with a new source file
+        output_dir.chmod(0o555)
+        source2 = tmp_path / "test2.txt"
+        source2.write_text("content2", encoding="utf-8")
+
+        try:
+            result = convert_file(source2, output_dir)
+
+            # Should fail with write_failed error code
+            assert result.status == "error"
+            assert result.error_code == "write_failed"
+            assert result.output_path is None
+            # Message should be user-safe
+            message = result.message or ""
+            assert "Traceback" not in message
+            assert "OSError" not in message
+            assert "Exception" not in message
+            # No partial file should be left behind
+            assert not (output_dir / "test2.md").exists()
+        finally:
+            # Cleanup: restore permissions so temp directory can be cleaned
+            output_dir.chmod(0o755)
