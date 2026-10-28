@@ -60,4 +60,9 @@ export const fr: Record<keyof typeof en, string> = {
   "conversion.running": "En cours",
   "conversion.success": "Succès",
   "conversion.error": "Erreur",
+  "conversion.processing": "Traitement",
+  "conversion.successfullConverted": "Convertis avec succès",
+  "conversion.errorConverting": "Erreur lors de la conversion",
+  "conversion.removeFile": "Supprimer",
+  "conversion.closeError": "Fermer l'erreur",
 };

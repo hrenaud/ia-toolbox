@@ -1,7 +1,8 @@
 import type { FormatInfo } from "./conversionApi";
 
 /**
- * Check if a file extension is supported for conversion
+ * Check if a file extension is supported for conversion.
+ * Extensions are compared in dotted form (.pdf) as returned by the worker.
  */
 export function isSupportedFormat(
   filename: string,
@@ -16,7 +17,8 @@ export function isSupportedFormat(
 }
 
 /**
- * Check if a format is recognized but requires an optional component
+ * Check if a format is recognized but requires an optional component.
+ * Extensions are compared in dotted form (.pdf) as returned by the worker.
  */
 export function requiresOptionalComponent(
   filename: string,
@@ -31,11 +33,12 @@ export function requiresOptionalComponent(
 }
 
 /**
- * Get the file extension from a filename (lowercase, without dot)
+ * Get the file extension from a filename, including the dot (.pdf, .docx, etc.).
+ * The worker's format catalog returns extensions with a leading dot.
  */
 function getFileExtension(filename: string): string {
   const lastDot = filename.lastIndexOf(".");
-  return lastDot > 0 ? filename.slice(lastDot + 1) : "";
+  return lastDot > 0 ? filename.slice(lastDot) : "";
 }
 
 /**

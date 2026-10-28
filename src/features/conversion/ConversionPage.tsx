@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { dictionaries, getInitialLocale } from "../../app/i18n";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { dictionaries, type Locale } from "../../app/i18n";
 import {
   loadSupportedFormats,
   startConversion,
@@ -13,24 +14,23 @@ import {
   requiresOptionalComponent,
   formatListForDisplay,
 } from "./formatLabels";
-import { useConversionJobs } from "./useConversionJobs";
 import "./ConversionPage.css";
 
-export function ConversionPage() {
+interface ConversionPageProps {
+  locale: Locale;
+}
+
+export function ConversionPage({ locale }: ConversionPageProps) {
   const [formats, setFormats] = useState<FormatInfo[]>([]);
   const [formatsLoaded, setFormatsLoaded] = useState(false);
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
   const [outputDirectory, setOutputDirectory] = useState<string | null>(null);
   const [isConverting, setIsConverting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>("");
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [jobs, setJobs] = useState<ConversionJob[]>([]);
   const statusRegionRef = useRef<HTMLDivElement>(null);
-  const { jobs, addJob, updateJob } = useConversionJobs();
-
-  // Get locale from system (respects saved preference at AppShell level)
-  const systemLocale = navigator.language;
-  const locale = getInitialLocale(systemLocale, null);
+  const errorAlertRef = useRef<HTMLDivElement>(null);
   const t = dictionaries[locale];
 
   // Load supported formats on mount
@@ -46,31 +46,63 @@ export function ConversionPage() {
         setFormatsLoaded(true);
       });
 
+    // Set up drag/drop listener (only in actual Tauri app, not in tests)
+    let unlistenDragDrop: (() => void) | null = null;
+    try {
+      const webview = getCurrentWebview();
+      if (webview) {
+        void webview
+          .onDragDropEvent((event) => {
+            if (event.payload.type === "drop") {
+              const paths = event.payload.paths;
+              if (paths && paths.length > 0) {
+                setSelectedFiles((prev) => [...prev, ...paths]);
+                setError(null);
+              }
+            }
+          })
+          .then((unlisten) => {
+            unlistenDragDrop = unlisten;
+          })
+          .catch((err) => console.error("Failed to set up drag/drop:", err));
+      }
+    } catch (err) {
+      // Drag/drop is not available in test environment
+      console.debug("Drag/drop not available:", err);
+    }
+
     return () => {
       void stopClient();
+      // Unlisten is async and fires in the background
+      if (unlistenDragDrop) {
+        unlistenDragDrop();
+      }
     };
   }, [t]);
 
-  const handleFileSelect = (files: FileList | null) => {
-    if (!files) return;
-    const newFiles = Array.from(files);
-    setSelectedFiles((prev) => [...prev, ...newFiles]);
-    setError(null);
+  const handleSelectFiles = async () => {
+    try {
+      const selected = await open({
+        multiple: true,
+        title: t["conversion.selectFiles"],
+        filters: formats.map((f) => ({
+          name: f.label,
+          extensions: [f.extension.slice(1)], // Remove the dot
+        })),
+      });
+      if (selected) {
+        const paths = Array.isArray(selected) ? selected : [selected];
+        setSelectedFiles((prev) => [...prev, ...paths]);
+        setError(null);
+      }
+    } catch (err) {
+      console.error("Failed to select files:", err);
+      setError(t["conversion.outputSelectError"]);
+    }
   };
 
-  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.currentTarget.classList.add("drag-active");
-  };
-
-  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
-    e.currentTarget.classList.remove("drag-active");
-  };
-
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.currentTarget.classList.remove("drag-active");
-    handleFileSelect(e.dataTransfer.files);
+  const handleRemoveFile = (path: string) => {
+    setSelectedFiles((prev) => prev.filter((f) => f !== path));
   };
 
   const handleSelectOutput = async () => {
@@ -88,8 +120,33 @@ export function ConversionPage() {
     }
   };
 
-  const handleRemoveFile = (index: number) => {
-    setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
+  const getFileBasename = (filePath: string): string => {
+    return filePath.split(/[\\/]/).pop() || filePath;
+  };
+
+  const upsertJob = (job: ConversionJob) => {
+    setJobs((prev) => {
+      const existing = prev.find((j) => j.id === job.id);
+      if (existing) {
+        return prev.map((j) => (j.id === job.id ? { ...j, ...job } : j));
+      }
+      return [...prev, job];
+    });
+  };
+
+  const updateStatusMessage = (job: ConversionJob) => {
+    const basename = getFileBasename(job.inputPath);
+    if (job.status === "running" && job.progress !== undefined) {
+      setStatusMessage(
+        `${t["conversion.processing"]} ${basename}: ${job.progress}%`,
+      );
+    } else if (job.status === "success") {
+      setStatusMessage(`${t["conversion.successfullConverted"]} ${basename}`);
+    } else if (job.status === "error") {
+      setStatusMessage(
+        `${t["conversion.errorConverting"]} ${basename}: ${job.message || "unknown error"}`,
+      );
+    }
   };
 
   const handleConvert = async () => {
@@ -98,8 +155,8 @@ export function ConversionPage() {
       return;
     }
 
-    const supportedFiles = selectedFiles.filter((file) =>
-      isSupportedFormat(file.name, formats),
+    const supportedFiles = selectedFiles.filter((path) =>
+      isSupportedFormat(getFileBasename(path), formats),
     );
 
     if (supportedFiles.length === 0) {
@@ -110,56 +167,36 @@ export function ConversionPage() {
     setIsConverting(true);
     setError(null);
     setStatusMessage("");
+    setJobs([]);
 
     try {
-      // Queue initial jobs
-      supportedFiles.forEach((file) => {
-        addJob({
-          id: crypto.randomUUID(),
-          inputPath: file.webkitRelativePath || file.name,
-          status: "queued",
-        });
+      await startConversion(supportedFiles, outputDirectory, (job) => {
+        upsertJob(job);
+        updateStatusMessage(job);
       });
-
-      await startConversion(
-        supportedFiles.map((f) => f.name),
-        outputDirectory,
-        (job) => {
-          updateJob(job.id, job);
-          updateStatusMessage(job);
-        },
-      );
     } catch (err) {
       const message =
         err instanceof Error ? err.message : t["conversion.unknownError"];
       setError(message);
       setStatusMessage(`Error: ${message}`);
+      // Move focus to error alert
+      errorAlertRef.current?.focus();
     } finally {
       setIsConverting(false);
     }
   };
 
-  const updateStatusMessage = (job: ConversionJob) => {
-    if (job.status === "running" && job.progress !== undefined) {
-      setStatusMessage(`Processing ${job.inputPath}: ${job.progress}%`);
-    } else if (job.status === "success") {
-      setStatusMessage(`Successfully converted ${job.inputPath}`);
-    } else if (job.status === "error") {
-      setStatusMessage(
-        `Error converting ${job.inputPath}: ${job.message || "unknown error"}`,
-      );
-    }
-  };
-
-  const unsupportedFiles = selectedFiles.filter((file) => {
-    const supported = isSupportedFormat(file.name, formats);
-    const optional = requiresOptionalComponent(file.name, formats);
+  const unsupportedFiles = selectedFiles.filter((path) => {
+    const basename = getFileBasename(path);
+    const supported = isSupportedFormat(basename, formats);
+    const optional = requiresOptionalComponent(basename, formats);
     return !supported && !optional;
   });
 
-  const optionalComponentFiles = selectedFiles.filter((file) =>
-    requiresOptionalComponent(file.name, formats),
-  );
+  const optionalComponentFiles = selectedFiles.filter((path) => {
+    const basename = getFileBasename(path);
+    return requiresOptionalComponent(basename, formats);
+  });
 
   return (
     <div className="conversion-page">
@@ -181,46 +218,34 @@ export function ConversionPage() {
         </div>
       )}
 
-      {/* File selection area */}
-      {!isConverting && selectedFiles.length === 0 && (
-        <div
-          className="file-input-area"
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
+      {/* File selection and management area */}
+      <div className="file-input-area">
+        <button
+          className="file-select-button"
+          onClick={() => void handleSelectFiles()}
         >
-          <button
-            className="file-select-button"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            {t["conversion.selectFiles"]}
-          </button>
+          {t["conversion.selectFiles"]}
+        </button>
+        {selectedFiles.length === 0 && (
           <p className="drag-hint">{t["conversion.dragHint"]}</p>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            onChange={(e) => handleFileSelect(e.currentTarget.files)}
-            style={{ display: "none" }}
-            aria-label={t["conversion.selectFiles"]}
-          />
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Selected files list */}
       {selectedFiles.length > 0 && !isConverting && (
         <div className="files-section">
           <h2>{t["conversion.selectedFiles"]}</h2>
           <ul className="file-list">
-            {selectedFiles.map((file, index) => {
-              const supported = isSupportedFormat(file.name, formats);
-              const optional = requiresOptionalComponent(file.name, formats);
+            {selectedFiles.map((filePath) => {
+              const basename = getFileBasename(filePath);
+              const supported = isSupportedFormat(basename, formats);
+              const optional = requiresOptionalComponent(basename, formats);
               return (
                 <li
-                  key={index}
+                  key={filePath}
                   className={`file-item ${supported ? "supported" : optional ? "optional" : "unsupported"}`}
                 >
-                  <span>{file.name}</span>
+                  <span>{basename}</span>
                   {!supported && !optional && (
                     <span className="status-badge unsupported">
                       {t["conversion.unsupported"]}
@@ -232,8 +257,8 @@ export function ConversionPage() {
                     </span>
                   )}
                   <button
-                    onClick={() => handleRemoveFile(index)}
-                    aria-label={`Remove ${file.name}`}
+                    onClick={() => handleRemoveFile(filePath)}
+                    aria-label={`${t["conversion.removeFile"]} ${basename}`}
                     className="remove-button"
                   >
                     ✕
@@ -257,7 +282,10 @@ export function ConversionPage() {
 
           {/* Output folder selector */}
           <div className="output-section">
-            <button onClick={handleSelectOutput} className="secondary-button">
+            <button
+              onClick={() => void handleSelectOutput()}
+              className="secondary-button"
+            >
               {outputDirectory
                 ? t["conversion.changeOutput"]
                 : t["conversion.selectOutput"]}
@@ -272,12 +300,14 @@ export function ConversionPage() {
 
           {/* Convert button */}
           <button
-            onClick={handleConvert}
+            onClick={() => void handleConvert()}
             disabled={
               isConverting ||
               selectedFiles.length === 0 ||
               !outputDirectory ||
-              selectedFiles.every((f) => !isSupportedFormat(f.name, formats))
+              selectedFiles.every(
+                (f) => !isSupportedFormat(getFileBasename(f), formats),
+              )
             }
             className="primary"
           >
@@ -302,9 +332,17 @@ export function ConversionPage() {
 
       {/* Error message */}
       {error && (
-        <div className="error-message" role="alert">
+        <div
+          className="error-message"
+          role="alert"
+          ref={errorAlertRef}
+          tabIndex={-1}
+        >
           <p>{error}</p>
-          <button onClick={() => setError(null)} aria-label="Close error">
+          <button
+            onClick={() => setError(null)}
+            aria-label={t["conversion.closeError"]}
+          >
             ✕
           </button>
         </div>
@@ -318,7 +356,9 @@ export function ConversionPage() {
             {jobs.map((job) => (
               <li key={job.id} className={`job-item job-${job.status}`}>
                 <div className="job-header">
-                  <span className="job-name">{job.inputPath}</span>
+                  <span className="job-name">
+                    {getFileBasename(job.inputPath)}
+                  </span>
                   <span className={`job-status status-${job.status}`}>
                     {t[`conversion.${job.status}`]}
                   </span>
@@ -334,7 +374,7 @@ export function ConversionPage() {
                 {job.message && <p className="job-message">{job.message}</p>}
                 {job.outputPath && (
                   <p className="output-file">
-                    Output: <code>{job.outputPath}</code>
+                    {t["conversion.outputPath"]} <code>{job.outputPath}</code>
                   </p>
                 )}
               </li>

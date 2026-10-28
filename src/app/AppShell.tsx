@@ -87,7 +87,7 @@ export function AppShell() {
               : t.anonymizeDescription}
           </p>
           {workflow === "convert" ? (
-            <ConversionPage />
+            <ConversionPage locale={locale} />
           ) : (
             <div className="status-card" role="status">
               <p>{t.unavailable}</p>

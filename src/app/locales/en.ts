@@ -54,4 +54,9 @@ export const en = {
   "conversion.running": "Running",
   "conversion.success": "Success",
   "conversion.error": "Error",
+  "conversion.processing": "Processing",
+  "conversion.successfullConverted": "Successfully converted",
+  "conversion.errorConverting": "Error converting",
+  "conversion.removeFile": "Remove",
+  "conversion.closeError": "Close error",
 };

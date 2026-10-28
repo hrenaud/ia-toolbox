@@ -2,12 +2,37 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { AppShell } from "./AppShell";
+import * as conversionApi from "../features/conversion/conversionApi";
+
+// Mock the conversion API
+vi.mock("../features/conversion/conversionApi");
+
+// Mock Tauri dialog and webview
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  open: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/api/webview", () => ({
+  getCurrentWebview: () => ({
+    onDragDropEvent: vi.fn(() => Promise.resolve(() => {})),
+  }),
+}));
 
 let media: EventTarget & { matches: boolean };
 beforeEach(() => {
+  vi.clearAllMocks();
   vi.spyOn(navigator, "language", "get").mockReturnValue("en-US");
   media = Object.assign(new EventTarget(), { matches: false });
   vi.stubGlobal("matchMedia", () => media);
+
+  // Mock the API
+  vi.mocked(conversionApi.loadSupportedFormats).mockResolvedValue([
+    {
+      extension: ".pdf",
+      label: "PDF",
+      requiresOptionalComponent: false,
+    },
+  ]);
 });
 
 it("renders named navigation and selected workflow content", async () => {
