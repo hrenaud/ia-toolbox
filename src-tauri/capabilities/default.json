@@ -1,7 +1,14 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main application window. No filesystem or process access.",
+  "description": "Main window may communicate only with the fixed document worker sidecar.",
   "windows": ["main"],
-  "permissions": []
+  "permissions": [
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [{ "name": "binaries/document-worker", "sidecar": true, "args": false }]
+    },
+    "shell:allow-stdin-write",
+    "shell:allow-kill"
+  ]
 }
