@@ -31,6 +31,7 @@ export function ConversionPage({ locale }: ConversionPageProps) {
   const [jobs, setJobs] = useState<ConversionJob[]>([]);
   const statusRegionRef = useRef<HTMLDivElement>(null);
   const errorAlertRef = useRef<HTMLDivElement>(null);
+  const shouldFocusError = useRef(false);
   const t = dictionaries[locale];
 
   // Load supported formats on mount
@@ -97,7 +98,7 @@ export function ConversionPage({ locale }: ConversionPageProps) {
       }
     } catch (err) {
       console.error("Failed to select files:", err);
-      setError(t["conversion.outputSelectError"]);
+      reportBlockingError(t["conversion.fileSelectError"]);
     }
   };
 
@@ -116,7 +117,7 @@ export function ConversionPage({ locale }: ConversionPageProps) {
       }
     } catch (err) {
       console.error("Failed to select output directory:", err);
-      setError(t["conversion.outputSelectError"]);
+      reportBlockingError(t["conversion.outputSelectError"]);
     }
   };
 
@@ -141,17 +142,34 @@ export function ConversionPage({ locale }: ConversionPageProps) {
         `${t["conversion.processing"]} ${basename}: ${job.progress}%`,
       );
     } else if (job.status === "success") {
-      setStatusMessage(`${t["conversion.successfullConverted"]} ${basename}`);
+      setStatusMessage(`${t["conversion.successfullyConverted"]} ${basename}`);
     } else if (job.status === "error") {
       setStatusMessage(
-        `${t["conversion.errorConverting"]} ${basename}: ${job.message || "unknown error"}`,
+        `${t["conversion.errorConverting"]} ${basename}: ${job.message || t["conversion.unknownError"]}`,
       );
     }
   };
 
+  // Report a blocking error raised by a user action: move focus to the alert so
+  // it is announced. The alert only exists after the state commit, so this
+  // cannot be done inline where setError is called. Errors surfaced without a
+  // user action, such as the format catalog failing on mount, keep focus where
+  // it is and rely on the alert region alone.
+  function reportBlockingError(message: string) {
+    shouldFocusError.current = true;
+    setError(message);
+  }
+
+  useEffect(() => {
+    if (error && shouldFocusError.current) {
+      shouldFocusError.current = false;
+      errorAlertRef.current?.focus();
+    }
+  }, [error]);
+
   const handleConvert = async () => {
     if (!outputDirectory) {
-      setError(t["conversion.outputRequired"]);
+      reportBlockingError(t["conversion.outputRequired"]);
       return;
     }
 
@@ -160,7 +178,7 @@ export function ConversionPage({ locale }: ConversionPageProps) {
     );
 
     if (supportedFiles.length === 0) {
-      setError(t["conversion.noSupportedFiles"]);
+      reportBlockingError(t["conversion.noSupportedFiles"]);
       return;
     }
 
@@ -177,10 +195,8 @@ export function ConversionPage({ locale }: ConversionPageProps) {
     } catch (err) {
       const message =
         err instanceof Error ? err.message : t["conversion.unknownError"];
-      setError(message);
-      setStatusMessage(`Error: ${message}`);
-      // Move focus to error alert
-      errorAlertRef.current?.focus();
+      reportBlockingError(message);
+      setStatusMessage(`${t["conversion.errorPrefix"]} ${message}`);
     } finally {
       setIsConverting(false);
     }

@@ -17,6 +17,24 @@ vi.mock("@tauri-apps/api/webview", () => ({
   }),
 }));
 
+/**
+ * The selected-files list and the job list both show the basename, so job
+ * assertions have to be scoped to the job list.
+ */
+function jobItem(basename: string): HTMLElement {
+  const items = Array.from(
+    document.querySelectorAll<HTMLElement>("li.job-item"),
+  ).filter((item) =>
+    item.querySelector(".job-name")?.textContent?.includes(basename),
+  );
+  if (items.length !== 1) {
+    throw new Error(
+      `expected exactly one job for ${basename}, found ${items.length}`,
+    );
+  }
+  return items[0];
+}
+
 let media: EventTarget & { matches: boolean };
 beforeEach(() => {
   vi.clearAllMocks();
@@ -95,7 +113,9 @@ describe("ConversionPage", () => {
     expect(statusRegion).toHaveAttribute("aria-atomic", "false");
   });
 
-  it("displays supported and unsupported formats distinctly", async () => {
+  it("badges selected files distinctly for convertible, OCR-gated, and unknown formats", async () => {
+    const dialogOpen = vi.mocked(dialogModule.open);
+
     vi.mocked(conversionApi.loadSupportedFormats).mockResolvedValue([
       {
         extension: ".pdf",
@@ -109,15 +129,31 @@ describe("ConversionPage", () => {
       },
     ]);
 
+    dialogOpen.mockResolvedValue([
+      "/path/ok.pdf",
+      "/path/scan.tiff",
+      "/path/mystery.xyz",
+    ]);
+
+    const user = userEvent.setup();
     render(<ConversionPage locale="en" />);
 
     await waitFor(() => {
-      expect(screen.getByText(/supported formats/i)).toBeInTheDocument();
+      expect(screen.getByText(/PDF, TIFF/)).toBeInTheDocument();
     });
 
-    // Verify both formats are displayed in the format list
-    const formatList = screen.getByText(/PDF, TIFF/);
-    expect(formatList).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /select files/i }));
+
+    const item = async (name: string) =>
+      (await screen.findByText(name)).closest("li")!;
+
+    // A convertible format carries no badge at all.
+    const convertible = await item("ok.pdf");
+    expect(convertible).not.toHaveTextContent(/unsupported|requires ocr/i);
+
+    // The two rejected files are distinguished by their reason, not by colour.
+    expect(await item("scan.tiff")).toHaveTextContent(/requires ocr/i);
+    expect(await item("mystery.xyz")).toHaveTextContent(/unsupported/i);
   });
 
   it("handles format loading errors gracefully", async () => {
@@ -202,15 +238,26 @@ describe("ConversionPage", () => {
       return ["/path/file1.pdf", "/path/file2.pdf"];
     });
 
+    // Hold the batch open after the first file so the intermediate running
+    // state is observable instead of being overwritten in the same tick.
+    let releaseSecondFile: () => void = () => {};
+    const secondFileGate = new Promise<void>((resolve) => {
+      releaseSecondFile = resolve;
+    });
+    const convertedOrder: string[] = [];
+
     vi.mocked(conversionApi.startConversion).mockImplementation(
-      async (_inputPaths, _outputDir, onUpdate) => {
-        // Simulate sequential conversion of two files
+      async (inputPaths, _outputDir, onUpdate) => {
+        expect(inputPaths).toEqual(["/path/file1.pdf", "/path/file2.pdf"]);
+
         onUpdate({
           id: "job-1",
           inputPath: "/path/file1.pdf",
           status: "running",
           progress: 50,
         });
+        await secondFileGate;
+        convertedOrder.push("/path/file1.pdf");
         onUpdate({
           id: "job-1",
           inputPath: "/path/file1.pdf",
@@ -223,6 +270,7 @@ describe("ConversionPage", () => {
           status: "running",
           progress: 75,
         });
+        convertedOrder.push("/path/file2.pdf");
         onUpdate({
           id: "job-2",
           inputPath: "/path/file2.pdf",
@@ -261,16 +309,25 @@ describe("ConversionPage", () => {
     });
     await user.click(convertButton);
 
-    // Verify progress is displayed
+    // Only the first file is under way, and its progress is announced.
     await waitFor(() => {
-      expect(screen.getByText(/progress/i)).toBeInTheDocument();
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Processing file1.pdf: 50%",
+      );
     });
+    expect(jobItem("file1.pdf")).toHaveTextContent(/running/i);
+    expect(screen.queryByText("/output/file1.md")).not.toBeInTheDocument();
 
-    // Verify success states
+    releaseSecondFile();
+
+    // Both files reach a terminal state, in the order they were submitted.
     await waitFor(() => {
-      const successElements = screen.getAllByText("Success");
-      expect(successElements.length).toBeGreaterThanOrEqual(2);
+      expect(screen.getAllByText("Success")).toHaveLength(2);
     });
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Successfully converted file2.pdf",
+    );
+    expect(convertedOrder).toEqual(["/path/file1.pdf", "/path/file2.pdf"]);
   });
 
   it("handles mixed batch with both success and error results in status region", async () => {
@@ -338,14 +395,16 @@ describe("ConversionPage", () => {
     });
     await user.click(convertButton);
 
-    // Verify status region exists
-    const statusRegion = screen.getByRole("status");
-    expect(statusRegion).toBeInTheDocument();
-
-    // Verify error state appears in job list
+    // The failure is announced, and both outcomes are listed per file.
     await waitFor(() => {
-      expect(screen.getAllByText(/error/i).length).toBeGreaterThan(1);
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Error converting file2.pdf: Conversion failed",
+      );
     });
+    expect(jobItem("file1.pdf")).toHaveTextContent(/success/i);
+    const failed = jobItem("file2.pdf");
+    expect(failed).toHaveTextContent(/error/i);
+    expect(failed).toHaveTextContent("Conversion failed");
   });
 
   it("respects keyboard-only interaction with file selection button", async () => {
@@ -384,7 +443,9 @@ describe("ConversionPage", () => {
     expect(dialogOpen).toHaveBeenCalled();
   });
 
-  it("displays proper error focus management with alert role", async () => {
+  it("moves focus to the alert for a blocking error raised by a user action", async () => {
+    const dialogOpen = vi.mocked(dialogModule.open);
+
     vi.mocked(conversionApi.loadSupportedFormats).mockResolvedValue([
       {
         extension: ".pdf",
@@ -393,6 +454,10 @@ describe("ConversionPage", () => {
       },
     ]);
 
+    // The native file dialog fails, which blocks the whole workflow.
+    dialogOpen.mockRejectedValue(new Error("dialog unavailable"));
+
+    const user = userEvent.setup();
     render(<ConversionPage locale="en" />);
 
     await waitFor(() => {
@@ -401,9 +466,23 @@ describe("ConversionPage", () => {
       ).toBeInTheDocument();
     });
 
-    // Error alert should have tabIndex={-1} so focus can be moved to it
-    const selectButton = screen.getByRole("button", { name: /select files/i });
-    expect(selectButton).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /select files/i }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/failed to select files/i);
+    expect(alert).toHaveFocus();
+  });
+
+  it("keeps focus in place when the format catalog fails on mount", async () => {
+    vi.mocked(conversionApi.loadSupportedFormats).mockRejectedValue(
+      new Error("Failed to load"),
+    );
+
+    render(<ConversionPage locale="en" />);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).not.toHaveFocus();
+    expect(document.body).toHaveFocus();
   });
 
   it("supports French locale", async () => {

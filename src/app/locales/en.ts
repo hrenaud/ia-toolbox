@@ -27,6 +27,7 @@ export const en = {
   "conversion.formatLoadError":
     "Failed to load supported formats. Please restart the app.",
   "conversion.outputSelectError": "Failed to select output folder.",
+  "conversion.fileSelectError": "Failed to select files.",
   "conversion.outputRequired":
     "Please select an output folder before converting.",
   "conversion.noSupportedFiles": "No supported files selected for conversion.",
@@ -55,8 +56,9 @@ export const en = {
   "conversion.success": "Success",
   "conversion.error": "Error",
   "conversion.processing": "Processing",
-  "conversion.successfullConverted": "Successfully converted",
+  "conversion.successfullyConverted": "Successfully converted",
   "conversion.errorConverting": "Error converting",
+  "conversion.errorPrefix": "Error:",
   "conversion.removeFile": "Remove",
   "conversion.closeError": "Close error",
 };

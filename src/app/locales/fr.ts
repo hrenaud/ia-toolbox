@@ -31,6 +31,7 @@ export const fr: Record<keyof typeof en, string> = {
     "Impossible de charger les formats pris en charge. Veuillez redémarrer l’application.",
   "conversion.outputSelectError":
     "Impossible de sélectionner le dossier de sortie.",
+  "conversion.fileSelectError": "Impossible de sélectionner les fichiers.",
   "conversion.outputRequired":
     "Veuillez sélectionner un dossier de sortie avant de convertir.",
   "conversion.noSupportedFiles":
@@ -61,8 +62,9 @@ export const fr: Record<keyof typeof en, string> = {
   "conversion.success": "Succès",
   "conversion.error": "Erreur",
   "conversion.processing": "Traitement",
-  "conversion.successfullConverted": "Convertis avec succès",
+  "conversion.successfullyConverted": "Converti avec succès :",
   "conversion.errorConverting": "Erreur lors de la conversion",
+  "conversion.errorPrefix": "Erreur :",
   "conversion.removeFile": "Supprimer",
-  "conversion.closeError": "Fermer l'erreur",
+  "conversion.closeError": "Fermer l’erreur",
 };
