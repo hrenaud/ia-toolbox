@@ -9,7 +9,11 @@
   },
   "scripts": {
     "dev": "vite",
+    "dev:worker": "uv run --project python python -m PyInstaller --clean --distpath $(pwd)/dist python/packaging/worker.spec && mkdir -p src-tauri/binaries && cp dist/document-worker src-tauri/binaries/document-worker-$(rustc --print host-tuple)",
     "build": "tsc --noEmit && vite build",
+    "build:worker": "node scripts/build-local.mjs",
+    "app:dev": "pnpm dev:worker && pnpm tauri dev",
+    "app:build": "pnpm build:worker",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",

@@ -13,6 +13,7 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = ["pytest>=8,<10", "ruff>=0.11,<1"]
+build = ["pyinstaller>=6.1,<7"]
 
 [tool.ruff]
 target-version = "py311"

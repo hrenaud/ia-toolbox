@@ -9,6 +9,7 @@ export default tseslint.config(
       "node_modules/**",
       "src-tauri/**",
       "superpowers/**",
+      ".superpowers/**",
       "python/**",
     ],
   },
@@ -18,5 +19,14 @@ export default tseslint.config(
     files: ["src/**/*.{ts,tsx}"],
     plugins: { "react-hooks": hooks },
     rules: hooks.configs.recommended.rules,
+  },
+  {
+    files: ["scripts/**/*.mjs"],
+    languageOptions: {
+      globals: {
+        console: "readonly",
+        process: "readonly",
+      },
+    },
   },
 );
