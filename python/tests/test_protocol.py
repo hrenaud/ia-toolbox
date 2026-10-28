@@ -38,13 +38,18 @@ def test_discovery_and_conversion_have_correlated_protocol_only_output(tmp_path)
         "convert", input_path=str(source), output_directory=str(tmp_path)
     )
     events = messages(formats, conversion)
-    assert events[0] == {
-        "id": formats["id"],
-        "event": "formats",
-        "items": [
-            {"extension": ".txt", "label": "Text", "requires_optional_component": False}
-        ],
-    }
+    # Check that formats event has the correct structure and includes .txt
+    assert events[0]["id"] == formats["id"]
+    assert events[0]["event"] == "formats"
+    assert isinstance(events[0]["items"], list)
+    assert len(events[0]["items"]) > 0
+    txt_format = next(
+        (fmt for fmt in events[0]["items"] if fmt["extension"] == ".txt"), None
+    )
+    assert txt_format is not None
+    assert txt_format["label"] == "Text"
+    assert txt_format["requires_optional_component"] is False
+
     assert all(event["id"] == conversion["id"] for event in events[1:])
     assert [event["percent"] for event in events if event["event"] == "progress"] == [
         0,
@@ -108,13 +113,17 @@ def test_per_file_error_does_not_stop_next_request(tmp_path):
     )
     valid = request()
     events = messages(missing, valid)
+    # Conversion request generates: progress 0, then error result
     assert events[0]["id"] == missing["id"]
-    assert events[0]["error_code"] == "input_not_found"
-    assert events[0]["status"] == "error"
-    assert events[1]["id"] == valid["id"]
+    assert events[0]["event"] == "progress"
+    assert events[1]["id"] == missing["id"]
+    assert events[1]["error_code"] == "input_not_found"
+    assert events[1]["status"] == "error"
+    # List formats request comes after
+    assert any(event["id"] == valid["id"] for event in events[2:])
 
 
-@pytest.mark.parametrize("failure", ["output_missing", "unsupported", "occupied"])
+@pytest.mark.parametrize("failure", ["output_missing", "unsupported"])
 def test_structured_file_errors_preserve_existing_files(tmp_path, failure):
     source = tmp_path / ("source.odt" if failure == "unsupported" else "source.txt")
     source.write_text("private original")
@@ -129,12 +138,34 @@ def test_structured_file_errors_preserve_existing_files(tmp_path, failure):
         == {
             "output_missing": "invalid_output_directory",
             "unsupported": "unsupported_format",
-            "occupied": "output_exists",
         }[failure]
     )
     assert "private original" not in json.dumps(event)
     assert source.read_text() == "private original"
     assert output.read_text() == "existing output"
+
+
+def test_output_filename_is_numbered_when_occupied(tmp_path):
+    """When <stem>.md exists, create <stem> (2).md instead of erroring."""
+    source = tmp_path / "source.txt"
+    source.write_text("new content")
+    existing = tmp_path / "source.md"
+    existing.write_text("existing output")
+
+    item = request(
+        "convert", input_path=str(source), output_directory=str(tmp_path)
+    )
+    event = messages(item)[-1]
+
+    # Should succeed, not error
+    assert event["status"] == "success"
+    # Should use numbered name
+    assert (tmp_path / "source (2).md").exists()
+    assert (tmp_path / "source (2).md").read_text() == "new content"
+    # Existing file should be untouched
+    assert existing.read_text() == "existing output"
+    # Source should be untouched
+    assert source.read_text() == "new content"
 
 
 @pytest.mark.parametrize("fails", [False, True])

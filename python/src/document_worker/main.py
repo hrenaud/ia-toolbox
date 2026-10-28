@@ -35,64 +35,37 @@ def silence_process_output():
 
 def process_request(request):
     if request.operation == "list_formats":
+        from document_worker.formats import supported_input_formats
+
+        items = [
+            {
+                "extension": fmt.extension,
+                "label": fmt.label,
+                "requires_optional_component": fmt.requires_optional_component,
+            }
+            for fmt in supported_input_formats()
+        ]
         yield {
             "id": request.id,
             "event": "formats",
-            "items": [
-                {
-                    "extension": ".txt",
-                    "label": "Text",
-                    "requires_optional_component": False,
-                }
-            ],
+            "items": items,
         }
         return
     source, directory = request.input_path, request.output_directory
-    if not source.is_file():
-        yield error_result(
-            request.id, "input_not_found", "Select an existing readable file."
-        )
-        return
-    if not directory.is_dir():
-        yield error_result(
-            request.id, "invalid_output_directory", "Select an existing output folder."
-        )
-        return
-    if source.suffix.lower() != ".txt":
-        yield error_result(
-            request.id, "unsupported_format", "Choose a supported file format."
-        )
-        return
     yield {"id": request.id, "event": "progress", "percent": 0}
     # Output isolation is installed before importing any conversion libraries.
-    from markitdown import MarkItDown
-    from markitdown.converters import PlainTextConverter
+    from document_worker.conversion import convert_file
 
-    converter = MarkItDown(enable_builtins=False, enable_plugins=False)
-    converter.register_converter(PlainTextConverter())
-    text = converter.convert_local(source).text_content
-    output = directory / f"{source.stem}.md"
-    try:
-        stream = output.open("x", encoding="utf-8")
-    except FileExistsError:
-        yield error_result(
-            request.id,
-            "output_exists",
-            "Choose a folder without an existing output file.",
-        )
+    result = convert_file(source, directory)
+    if result.status == "error":
+        yield error_result(request.id, result.error_code, result.message)
         return
-    try:
-        with stream:
-            stream.write(text)
-    except OSError:
-        output.unlink(missing_ok=True)
-        raise
     yield {"id": request.id, "event": "progress", "percent": 100}
     yield {
         "id": request.id,
         "event": "result",
         "status": "success",
-        "output_path": str(output),
+        "output_path": result.output_path,
     }
 
 
