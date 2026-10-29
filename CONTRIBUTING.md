@@ -244,7 +244,20 @@ Each target needs a runner of its own architecture: PyInstaller cannot cross-com
 `scripts/build-local.mjs` names the sidecar after the **host** triple while Tauri looks it up by the
 **build** target. A mismatch fails the bundle step.
 
+### Action pinning
+
+Third-party actions are pinned to a full commit SHA with the version in a trailing comment. A
+mutable tag like `@v2` can be repointed by whoever controls the action's repository, and the release
+job holds the Apple certificate and the updater private key — a compromised tag there is a secret
+exfiltration. Let Dependabot or Renovate move the pins.
+
+Actions under `actions/` are GitHub-owned and left on major tags.
+
 ### Secrets
+
+The release job declares `environment: release`. Create that environment under Settings →
+Environments and add required reviewers: the signing secrets are then only handed to a run someone
+approved. Scope the secrets to that environment rather than to the repository.
 
 All of these are optional. Without them the workflow still produces unsigned bundles, which is what
 forks and local builds get.
