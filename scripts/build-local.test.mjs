@@ -4,7 +4,32 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { commandExists, getSidecarFilename } from "./build-local.mjs";
+import {
+  commandExists,
+  getPyInstallerCommand,
+  getSidecarFilename,
+} from "./build-local.mjs";
+
+describe("getPyInstallerCommand", () => {
+  // PyInstaller lives in the `build` dependency group, which `uv` does not
+  // install by default. Without `--group build` a fresh checkout — or a CI
+  // runner — resolves no `pyinstaller` and the worker build fails.
+  it("requests the build dependency group", () => {
+    expect(getPyInstallerCommand("/repo/python")).toContain("--group build");
+  });
+
+  it("runs the packaging spec through uv in the python project", () => {
+    const command = getPyInstallerCommand("/repo/python");
+    expect(command).toContain("uv run --project /repo/python");
+    expect(command).toContain("python/packaging/worker.spec");
+  });
+
+  it("keeps PyInstaller output out of the Vite dist directory", () => {
+    expect(getPyInstallerCommand("/repo/python")).toContain(
+      "--distpath python/dist",
+    );
+  });
+});
 
 describe("getSidecarFilename", () => {
   it("should produce macOS filename without .exe extension", () => {

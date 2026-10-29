@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Quality gate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        # Version comes from the `packageManager` field in package.json.
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Sync Python environment
+        run: uv sync --project python --locked
+
+      # --- Frontend ---------------------------------------------------------
+      - run: pnpm typecheck
+      - run: pnpm test -- --run
+      - run: pnpm lint
+      - run: pnpm format:check
+      - run: pnpm build
+
+      # --- Python worker ----------------------------------------------------
+      - run: uv run --project python ruff check python/src python/tests
+      - run: uv run --project python pytest -q
+
+  rust:
+    name: Rust compile check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # `externalBin` makes Tauri's config resolution look for the sidecar, so a
+      # placeholder is needed for a config-only compile check. The real binary is
+      # produced by PyInstaller in the release workflow.
+      - name: Create sidecar placeholder
+        shell: bash
+        run: |
+          triple=$(rustc --print host-tuple)
+          ext=""
+          [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
+          mkdir -p src-tauri/binaries
+          : > "src-tauri/binaries/document-worker-${triple}${ext}"
+
+      - name: Format check
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+      - name: Clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Tests
+        working-directory: src-tauri
+        run: cargo test

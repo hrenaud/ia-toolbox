@@ -76,6 +76,11 @@ The generated installer is located at:
 - **macOS:** `src-tauri/target/release/bundle/macos/IA Toolbox.app`
 - **Windows:** `src-tauri/target/release/bundle/msi/IA Toolbox*.msi`
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow, the full test gate, the
+architecture boundaries to respect, and how CI and releases are configured.
+
 ## Architecture
 
 The application uses:

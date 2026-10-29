@@ -81,6 +81,17 @@ export function getSidecarFilename(targetTriple, platform = process.platform) {
 }
 
 /**
+ * Build the PyInstaller invocation for the packaged worker.
+ *
+ * `--group build` is required: PyInstaller sits in the `build` dependency group
+ * of python/pyproject.toml, and a plain `uv run` syncs only the default groups,
+ * which would uninstall it.
+ */
+export function getPyInstallerCommand(pythonProjectDir) {
+  return `uv run --project ${pythonProjectDir} --group build pyinstaller --clean --distpath python/dist python/packaging/worker.spec`;
+}
+
+/**
  * Detect the Rust target triple for the current host.
  * Returns a string like "aarch64-apple-darwin" or "x86_64-pc-windows-msvc".
  */
@@ -123,9 +134,8 @@ function buildWorker() {
   const ext = process.platform === "win32" ? ".exe" : "";
   const binaryName = `document-worker${ext}`;
 
-  // Run PyInstaller via uv. Use python/dist to avoid polluting the Vite output dir.
   runVerbose(
-    `uv run --project ${pythonDir} pyinstaller --clean --distpath python/dist python/packaging/worker.spec`,
+    getPyInstallerCommand(pythonDir),
     "Building Python worker with PyInstaller",
   );
 
