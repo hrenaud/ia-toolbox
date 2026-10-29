@@ -1,72 +1,164 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 /**
- * WCAG 2.1 relative luminance formula.
- * Computes the relative luminance of a color for contrast calculations.
+ * Contrast guarantees for the colours actually declared in the stylesheets.
+ *
+ * The colours are read out of the CSS rather than restated here, because a test
+ * holding its own copies of the hex values asserts arithmetic and not the app:
+ * editing `theme.css` to a failing colour would leave it green. The pairs are
+ * still enumerated by hand — resolving the real cascade is not worth it, and an
+ * explicit pair cannot produce a false pass.
  */
-function getRelativeLuminance(hex: string): number {
-  const hex_clean = hex.replace(/^#/, "");
-  const r = parseInt(hex_clean.substring(0, 2), 16) / 255;
-  const g = parseInt(hex_clean.substring(2, 4), 16) / 255;
-  const b = parseInt(hex_clean.substring(4, 6), 16) / 255;
 
-  const rs = r <= 0.03928 ? r / 12.92 : Math.pow((r + 0.055) / 1.055, 2.4);
-  const gs = g <= 0.03928 ? g / 12.92 : Math.pow((g + 0.055) / 1.055, 2.4);
-  const bs = b <= 0.03928 ? b / 12.92 : Math.pow((b + 0.055) / 1.055, 2.4);
-
-  return 0.2126 * rs + 0.7152 * gs + 0.0722 * bs;
-}
+// Read from the project root: the jsdom environment resolves `import.meta.url`
+// to an http URL, which `readFileSync` rejects.
+const THEME_CSS = readFileSync(resolve("src/app/theme.css"), "utf8");
+const CONVERSION_CSS = readFileSync(
+  resolve("src/features/conversion/ConversionPage.css"),
+  "utf8",
+);
 
 /**
- * Compute contrast ratio between two colors.
- * WCAG 2.1: (Lmax + 0.05) / (Lmin + 0.05)
+ * Read a declaration from the stylesheet.
+ *
+ * A selector can appear in several rules — `.warning` is in a shared layout
+ * rule and again in its own colour rule — so every matching rule is scanned and
+ * the last declaration wins, as the cascade would have it.
  */
-function getContrastRatio(foreground: string, background: string): number {
-  const lFg = getRelativeLuminance(foreground);
-  const lBg = getRelativeLuminance(background);
+function declaredValue(
+  css: string,
+  selector: string,
+  property: string,
+): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const matchesSelector = new RegExp(`(?:^|,)\\s*${escaped}\\s*(?:,|$)`);
+  const declares = new RegExp(`(?:^|;)\\s*${property}\\s*:\\s*([^;]+)`);
 
-  const lMax = Math.max(lFg, lBg);
-  const lMin = Math.min(lFg, lBg);
+  let declaration: RegExpExecArray | null = null;
+  let matchedAnyRule = false;
+  for (const rule of css.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+    if (!matchesSelector.test(rule[1].trim())) continue;
+    matchedAnyRule = true;
+    declaration = declares.exec(rule[2]) ?? declaration;
+  }
 
-  return (lMax + 0.05) / (lMin + 0.05);
+  if (!matchedAnyRule) throw new Error(`no rule matching "${selector}"`);
+  if (!declaration) throw new Error(`"${selector}" declares no ${property}`);
+
+  const value = declaration[1].trim();
+  if (!/^#[0-9a-f]{6}$/i.test(value)) {
+    throw new Error(
+      `"${selector}" ${property} is "${value}", not a 6-digit hex colour`,
+    );
+  }
+  return value;
 }
 
-describe("WCAG contrast ratios", () => {
-  // Text pairs: require 4.5:1 for normal text (non-large)
-  it("warning text #bf360c on #fff3e0 has sufficient contrast", () => {
-    const ratio = getContrastRatio("#bf360c", "#fff3e0");
-    expect(ratio).toBeGreaterThanOrEqual(4.5);
+/** WCAG 2.1 relative luminance. */
+function relativeLuminance(hex: string): number {
+  const [r, g, b] = [1, 3, 5].map((i) => {
+    const channel = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return channel <= 0.04045
+      ? channel / 12.92
+      : ((channel + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function contrastRatio(foreground: string, background: string): number {
+  const a = relativeLuminance(foreground);
+  const b = relativeLuminance(background);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}
+
+const lightBackground = declaredValue(THEME_CSS, ":root", "--background");
+const lightSurface = declaredValue(THEME_CSS, ":root", "--surface");
+const darkBackground = declaredValue(
+  THEME_CSS,
+  ':root[data-theme="dark"]',
+  "--background",
+);
+
+// 4.5:1 is the AA threshold for normal-size text. None of these qualifies as
+// "large" (>=24px, or >=18.66px bold): the badges are 0.8rem/600 and the
+// warning is 0.95rem, so the relaxed 3:1 threshold does not apply.
+const textPairs: ReadonlyArray<[string, string, string]> = [
+  [".warning", "color", "background"],
+  [".status-running", "color", "background"],
+  [".status-success", "color", "background"],
+  [".status-error", "color", "background"],
+  [".status-queued", "color", "background"],
+];
+
+describe("declared text colours meet WCAG AA", () => {
+  it.each(textPairs)(
+    "%s",
+    (selector, foregroundProperty, backgroundProperty) => {
+      const foreground = declaredValue(
+        CONVERSION_CSS,
+        selector,
+        foregroundProperty,
+      );
+      const background = declaredValue(
+        CONVERSION_CSS,
+        selector,
+        backgroundProperty,
+      );
+      expect(contrastRatio(foreground, background)).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+
+  it(".status-badge.unsupported", () => {
+    const foreground = declaredValue(
+      CONVERSION_CSS,
+      ".status-badge.unsupported",
+      "color",
+    );
+    const background = declaredValue(
+      CONVERSION_CSS,
+      ".status-badge.unsupported",
+      "background",
+    );
+    expect(contrastRatio(foreground, background)).toBeGreaterThanOrEqual(4.5);
+  });
+});
+
+// WCAG 1.4.11: 3:1 for the visual boundary of a UI component. The light border
+// sits on both the page background and the raised surface, so both must clear.
+describe("declared border colours meet the non-text threshold", () => {
+  it("light border on background", () => {
+    const border = declaredValue(THEME_CSS, ":root", "--border");
+    expect(contrastRatio(border, lightBackground)).toBeGreaterThanOrEqual(3);
   });
 
-  it("info text #1565c0 on #e3f2fd has sufficient contrast", () => {
-    const ratio = getContrastRatio("#1565c0", "#e3f2fd");
-    expect(ratio).toBeGreaterThanOrEqual(4.5);
+  it("light border on surface", () => {
+    const border = declaredValue(THEME_CSS, ":root", "--border");
+    expect(contrastRatio(border, lightSurface)).toBeGreaterThanOrEqual(3);
   });
 
-  it("success text #2e7d32 on #e8f5e9 has sufficient contrast", () => {
-    const ratio = getContrastRatio("#2e7d32", "#e8f5e9");
-    expect(ratio).toBeGreaterThanOrEqual(4.5);
+  it("dark border on background", () => {
+    const border = declaredValue(
+      THEME_CSS,
+      ':root[data-theme="dark"]',
+      "--border",
+    );
+    expect(contrastRatio(border, darkBackground)).toBeGreaterThanOrEqual(3);
   });
+});
 
-  it("error text #c62828 on #ffebee has sufficient contrast", () => {
-    const ratio = getContrastRatio("#c62828", "#ffebee");
-    expect(ratio).toBeGreaterThanOrEqual(4.5);
-  });
-
-  // Border pairs on background: require 3:1 for UI component boundaries
-  it("border #7c8c9b on background #f4f6f8 has sufficient contrast", () => {
-    const ratio = getContrastRatio("#7c8c9b", "#f4f6f8");
-    expect(ratio).toBeGreaterThanOrEqual(3);
-  });
-
-  it("border #7c8c9b on surface #ffffff has sufficient contrast", () => {
-    const ratio = getContrastRatio("#7c8c9b", "#ffffff");
-    expect(ratio).toBeGreaterThanOrEqual(3);
-  });
-
-  // Dark theme border: already passes
-  it("dark theme border #7a8c9c on #141c24 has sufficient contrast", () => {
-    const ratio = getContrastRatio("#7a8c9c", "#141c24");
-    expect(ratio).toBeGreaterThanOrEqual(3);
+describe("declared body text meets WCAG AA", () => {
+  it.each([
+    [":root", "light"],
+    [':root[data-theme="dark"]', "dark"],
+  ])("%s text and muted text on background", (selector) => {
+    const background = declaredValue(THEME_CSS, selector, "--background");
+    expect(
+      contrastRatio(declaredValue(THEME_CSS, selector, "--text"), background),
+    ).toBeGreaterThanOrEqual(4.5);
+    expect(
+      contrastRatio(declaredValue(THEME_CSS, selector, "--muted"), background),
+    ).toBeGreaterThanOrEqual(4.5);
   });
 });
