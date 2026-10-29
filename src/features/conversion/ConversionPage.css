@@ -1,3 +1,15 @@
+/**
+ * ConversionPage uses hardcoded badge and status colours (Material Design palette).
+ * These are not lifted to theme.css because:
+ * - They are feature-specific to conversion workflows, not shared across the app
+ * - The Material palette is a stable design standard used by this feature's design
+ * - Dark-mode fallback (light chips on dark surface) is acceptable and tested
+ * - Adding theme variables for single-use colours increases complexity without benefit
+ *
+ * All colour pairs set both `background` and `color` together, ensuring dark-mode
+ * legibility even without explicit theme overrides.
+ */
+
 .conversion-page {
   display: flex;
   flex-direction: column;
@@ -129,7 +141,7 @@
 .status-badge.unsupported,
 .status-badge.optional {
   background: #fff3e0;
-  color: #e65100;
+  color: #bf360c;
 }
 
 .remove-button {
@@ -157,7 +169,7 @@
 
 .warning {
   background: #fff3e0;
-  color: #e65100;
+  color: #bf360c;
   border-left: 3px solid #ff9800;
 }
 
@@ -341,7 +353,7 @@
 
 .status-running {
   background: #fff3e0;
-  color: #e65100;
+  color: #bf360c;
 }
 
 .status-success {
