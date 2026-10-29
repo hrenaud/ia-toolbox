@@ -7,47 +7,38 @@ Tauri sidecar. The binary is placed in src-tauri/binaries/ with a target-triple
 suffix for platform detection during build.
 """
 
-block_cipher = None
+from PyInstaller.utils.hooks import collect_all, collect_data_files, copy_metadata
+
+# Collect all data files, binaries, and hidden imports from MarkItDown
+# (include_py_files=False keeps only data, not .py duplicates)
+datas_markitdown, binaries_markitdown, hiddenimports_markitdown = collect_all(
+    "markitdown", include_py_files=False
+)
+
+# MarkItDown depends on magika for file type detection.
+# Its ML models and configuration are critical runtime data files.
+datas_magika = collect_data_files("magika")
+datas_magika_metadata = copy_metadata("magika")
+
+# Combine all collected data and binaries
+datas = datas_markitdown + datas_magika + datas_magika_metadata
+binaries = binaries_markitdown
+hiddenimports = hiddenimports_markitdown
 
 a = Analysis(
     ["../src/document_worker/main.py"],
     pathex=["../src"],
-    binaries=[],
-    datas=[],
-    hiddenimports=[
-        "markitdown",
-        "markitdown.converters",
-        "markitdown.converters._base_converter",
-        "markitdown.converters._csv_converter",
-        "markitdown.converters._docx_converter",
-        "markitdown.converters._epub_converter",
-        "markitdown.converters._html_converter",
-        "markitdown.converters._ipynb_converter",
-        "markitdown.converters._pdf_converter",
-        "markitdown.converters._plaintext_converter",
-        "markitdown.converters._pptx_converter",
-        "markitdown.converters._xlsx_converter",
-        "markitdown.converters._xls_converter",
-        "markitdown.converters._zip_converter",
-        "onnxruntime",
-        "PIL",
-        "html5lib",
-        "bs4",
-        "pypdf",
-        "openpyxl",
-        "pptx",
-    ],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[],
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
-    cipher=block_cipher,
     noarchive=False,
 )
 
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+pyz = PYZ(a.pure)
 
 exe = EXE(
     pyz,
@@ -68,5 +59,4 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    onefile=True,
 )

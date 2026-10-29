@@ -1,5 +1,10 @@
 node_modules/
 dist/
+build/
 src-tauri/target/
 src-tauri/gen/
+src-tauri/binaries/
+python/build/
+python/dist/
+pnpm-workspace.yaml
 .DS_Store
