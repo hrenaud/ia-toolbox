@@ -206,7 +206,7 @@ class TestConversionErrors:
 
 
 class TestOfficeAndPdfFormats:
-    """Test Office and PDF format conversions with generated fixtures."""
+    """Test Office and PDF format support in catalog."""
 
     def test_office_formats_are_declared(self):
         """Office formats should be in the catalog."""

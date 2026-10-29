@@ -173,7 +173,7 @@ importers:
         specifier: ^2.6.0
         version: 2.8.3
       '@tauri-apps/plugin-shell':
-        specifier: ^2.6.0
+        specifier: ^2.5.0
         version: 2.6.0
       react:
         specifier: ^19.3.1

@@ -6,5 +6,4 @@ src-tauri/gen/
 src-tauri/binaries/
 python/build/
 python/dist/
-pnpm-workspace.yaml
 .DS_Store
