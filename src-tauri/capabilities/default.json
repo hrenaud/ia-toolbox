@@ -1,9 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window may communicate only with the fixed document worker sidecar and open file/folder dialogs.",
+  "description": "Main window may communicate only with the fixed document worker sidecar, open file/folder dialogs, and receive native drag and drop events.",
   "windows": ["main"],
   "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
     {
       "identifier": "shell:allow-spawn",
       "allow": [{ "name": "binaries/document-worker", "sidecar": true, "args": false }]
