@@ -17,32 +17,27 @@ import {
 // the script exits 0 having built nothing, and the failure only surfaces much
 // later, as a Tauri bundle complaining about a missing sidecar — which is
 // exactly how it was found, on a release build.
+//
+// Both cases are derived from this module's own path rather than written as
+// literals. No path literal can be portable here: pathToFileURL is the thing
+// under test and it is platform-dependent: it resolves its argument first, so
+// "/Users/dev/x.mjs" yields "file:///Users/dev/x.mjs" on macOS but picks up the
+// runner's current drive letter on Windows.
+// Deriving the paths sidesteps that, and on the Windows runner the first case
+// is what catches a guard that concatenates onto "file://" instead of
+// converting.
 describe("isDirectInvocation", () => {
-  it("recognises a POSIX path", () => {
-    expect(
-      isDirectInvocation(
-        "file:///Users/dev/ia-toolbox/scripts/build-local.mjs",
-        "/Users/dev/ia-toolbox/scripts/build-local.mjs",
-      ),
-    ).toBe(true);
-  });
+  const thisScript = fileURLToPath(import.meta.url);
 
-  // The Windows case cannot be written as a literal here: the conversion is
-  // platform-dependent, and a POSIX host reads "D:\a\..." as a relative path.
-  // This round-trip stands in for it — it holds on any platform, and on the
-  // Windows runner it is what catches a guard that concatenates the path onto
-  // "file://" instead of converting it.
-  it("recognises this module's own invocation on any platform", () => {
-    expect(
-      isDirectInvocation(import.meta.url, fileURLToPath(import.meta.url)),
-    ).toBe(true);
+  it("recognises this module's own invocation", () => {
+    expect(isDirectInvocation(import.meta.url, thisScript)).toBe(true);
   });
 
   it("rejects a different module", () => {
     expect(
       isDirectInvocation(
-        "file:///Users/dev/ia-toolbox/scripts/build-local.mjs",
-        "/Users/dev/ia-toolbox/scripts/other.mjs",
+        import.meta.url,
+        thisScript.replace("build-local.test.mjs", "other.mjs"),
       ),
     ).toBe(false);
   });
