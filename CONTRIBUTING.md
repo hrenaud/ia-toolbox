@@ -292,6 +292,10 @@ sets `privatePackages` to `{ "version": true, "tag": true }`; without it `change
 report success and bump nothing — a silent failure, which is why
 `scripts/release-config.test.mjs` asserts it.
 
+One repository setting is required before any of this works: Settings → Actions → General → enable
+**"Allow GitHub Actions to create and approve pull requests"**. Without it `version.yml` fails when
+it tries to open the version pull request, and no release can ever start.
+
 ### Cutting a release
 
 Nothing to do by hand. Merging a changeset to `main` does not release:
