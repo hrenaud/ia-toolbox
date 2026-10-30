@@ -221,7 +221,20 @@ to express is architectural, and `python/tests/test_dependency_closure.py` now e
 by failing on any remote-service client in the installed closure.
 
 Follow-on slice 3 (CI/CD) has since been partially built outside this plan: `.github/workflows/`
-holds the quality gate and a release workflow, and `CONTRIBUTING.md` documents the GitHub
-configuration. The updater is plumbed but inert — `tauri-plugin-updater` is not a dependency and
-`tauri.conf.json` has no `plugins.updater` section. Slices 1 (Presidio anonymization) and 2 (local
-OCR) remain unstarted.
+holds the quality gate, a version workflow and a release workflow, and `CONTRIBUTING.md` documents
+the GitHub configuration. Versions are driven by Changesets: a merged changeset opens a version pull
+request, and merging that pushes the `v<version>` tag and calls the release workflow. `package.json`
+is the only file carrying a real version — `tauri.conf.json` reads it via `"../package.json"` and
+`src-tauri/Cargo.toml` is pinned at `0.0.0` — so a bump cannot leave the bundle mislabelled. A
+best-effort `x86_64-unknown-linux-gnu` target was added to the release matrix with
+`continue-on-error`; Linux remains unsupported and untested, and its failure cannot withhold the
+macOS and Windows installers.
+
+The updater is plumbed but inert — `tauri-plugin-updater` is not a dependency and `tauri.conf.json`
+has no `plugins.updater` section. Slices 1 (Presidio anonymization) and 2 (local OCR) remain
+unstarted.
+
+Nothing in `.github/workflows/` has run on GitHub Actions yet. The version workflow's hand-off to
+the release workflow in particular rests on the Changesets action reporting `published: true` for a
+private package, which has not been observed here; if it does not, the tag is still pushed and the
+release can be re-run from it manually.

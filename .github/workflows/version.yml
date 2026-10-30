@@ -1,0 +1,82 @@
+name: Version
+
+# Changesets drives every release. A pull request that changes something a user
+# can see carries a changeset file; merging it here does not publish anything,
+# it opens or updates a "Version Packages" pull request collecting the pending
+# changesets. Merging *that* pull request bumps package.json, writes CHANGELOG.md,
+# pushes the v<version> tag and hands off to release.yml for the signed bundles.
+on:
+  push:
+    branches: [main]
+
+# Two releases must never run at once: both would version from the same base and
+# the second would push a tag for a version the first already claimed.
+concurrency:
+  group: version-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Release pull request or tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # commit the version bump, push the tag
+      pull-requests: write # open and update the version pull request
+    outputs:
+      released: ${{ steps.changesets.outputs.published }}
+      tag: v${{ steps.released.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Changesets reads the history to find which changesets are already
+          # released; a shallow clone makes it treat every one as pending.
+          fetch-depth: 0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Open release pull request or push tag
+        id: changesets
+        uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          version-script: pnpm changeset version
+          # The app is private, so nothing reaches a registry: this only tags
+          # the released version, which `privatePackages.tag` enables.
+          publish-script: pnpm changeset publish
+          # tauri-action creates the GitHub release and attaches the installers
+          # to it. Letting Changesets create one too would leave two releases on
+          # the same tag, one of them empty.
+          create-github-releases: false
+          commit-message: "chore(release): version packages"
+          pr-title: "chore(release): version packages"
+
+      - name: Read the released version
+        id: released
+        if: steps.changesets.outputs.published == 'true'
+        run: echo "version=$(node -p 'require("./package.json").version')" >>"$GITHUB_OUTPUT"
+
+  # Separate workflow rather than inline jobs because release.yml is also usable
+  # on its own, from a hand-pushed tag or workflow_dispatch. That is the fallback
+  # if this hand-off ever fails: the tag is already pushed, so the release can be
+  # re-run from it without redoing the version bump.
+  release:
+    name: Release
+    needs: version
+    if: needs.version.outputs.released == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.version.outputs.tag }}
+    # Hands the signing secrets to the called workflow, which gates them behind
+    # the `release` environment.
+    secrets: inherit

@@ -250,10 +250,11 @@ handling for impossible states.
 
 ### Workflows
 
-| File                            | Trigger                   | What it does                                                              |
-| ------------------------------- | ------------------------- | ------------------------------------------------------------------------- |
-| `.github/workflows/ci.yml`      | push/PR to `main`, manual | Runs the quality gate and the Rust checks on macOS and Windows            |
-| `.github/workflows/release.yml` | tag matching `v*`, manual | Builds bundles for three targets and publishes a **draft** GitHub Release |
+| File                            | Trigger                                   | What it does                                                                |
+| ------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------- |
+| `.github/workflows/ci.yml`      | push/PR to `main`, manual                 | Runs the quality gate and the Rust checks on macOS and Windows              |
+| `.github/workflows/version.yml` | push to `main`                            | Opens the version pull request, or pushes the release tag and calls release |
+| `.github/workflows/release.yml` | called by `version.yml`; `v*` tag; manual | Builds the bundles and publishes a **draft** GitHub Release                 |
 
 CI runs two jobs per OS: `gate` (frontend + Python) and `rust` (fmt, clippy, test). Neither needs
 secrets, so they run on pull requests from forks.
@@ -272,29 +273,68 @@ Rust compile check (windows-latest)
 Settings → Branches → Add branch ruleset → require status checks to pass. Also enable "Require
 branches to be up to date before merging" so a green check reflects the merged state.
 
-### Cutting a release
+### Changesets
 
-The version appears in four files and they must agree, because Tauri reads its own:
-
-- `package.json`
-- `src-tauri/tauri.conf.json` ← the one Tauri uses for the bundle
-- `src-tauri/Cargo.toml`
-- `python/pyproject.toml`
-
-Bump all four, commit, then tag:
+Versions are never bumped by hand. Every pull request that changes something a user can see,
+install or run carries a changeset:
 
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
+pnpm changeset
 ```
 
-The release workflow builds `aarch64-apple-darwin` (on `macos-latest`), `x86_64-apple-darwin` (on
-`macos-15-intel`) and `x86_64-pc-windows-msvc`, then attaches the bundles to a draft release.
-Review it and publish manually.
+Pick the bump and describe the change for someone who will never read the diff — the text is copied
+verbatim into `CHANGELOG.md`. A pull request with no user-visible effect needs no changeset. CI does
+not enforce this, deliberately: a mandatory changeset on a test-only change produces an empty file
+that says nothing.
+
+The app is `"private": true`, which Changesets skips entirely by default. `.changeset/config.json`
+sets `privatePackages` to `{ "version": true, "tag": true }`; without it `changeset version` would
+report success and bump nothing — a silent failure, which is why
+`scripts/release-config.test.mjs` asserts it.
+
+### Cutting a release
+
+Nothing to do by hand. Merging a changeset to `main` does not release:
+
+1. `version.yml` sees the pending changeset and opens a **`chore(release): version packages`** pull
+   request. It accumulates every changeset merged since the last release and shows the resulting
+   `CHANGELOG.md`.
+2. Merging that pull request bumps `package.json`, writes `CHANGELOG.md`, deletes the consumed
+   changesets and pushes the `v<version>` tag.
+3. `version.yml` then calls `release.yml`, which builds the bundles and attaches them to a **draft**
+   GitHub Release. Review it and publish manually.
+
+The version PR is the release gate: until it is merged, nothing ships.
+
+**The tag alone does not start the build.** A tag pushed with `GITHUB_TOKEN` does not trigger a
+workflow run, so `release.yml` is called directly by `version.yml` via `workflow_call`. Its
+`push: tags` trigger still covers a tag pushed by a human. If the hand-off ever fails, the tag is
+already on the remote — re-run `release.yml` from Actions → Release → Run workflow with that tag.
+
+#### Where the version lives
+
+`package.json` is the only file with a real version. `src-tauri/tauri.conf.json` sets
+`"version": "../package.json"`, which Tauri resolves relative to `src-tauri/`, so the bundle always
+matches the tag. `src-tauri/Cargo.toml` is pinned at `0.0.0`: Cargo demands a version, Tauri only
+falls back to it when `tauri.conf.json` sets none, and `0.0.0` in a bundle is an obvious regression
+rather than a plausible-looking wrong number.
+
+`python/pyproject.toml` is **not** part of this. The worker is an internal package that users never
+see a version for; keeping it in sync would be ceremony with no reader.
+
+#### Targets
+
+`release.yml` builds `aarch64-apple-darwin` (on `macos-latest`), `x86_64-apple-darwin` (on
+`macos-15-intel`) and `x86_64-pc-windows-msvc`.
 
 Each target needs a runner of its own architecture: PyInstaller cannot cross-compile, and
 `scripts/build-local.mjs` names the sidecar after the **host** triple while Tauri looks it up by the
 **build** target. A mismatch fails the bundle step.
+
+`x86_64-unknown-linux-gnu` is also built, but as **best-effort only**. Linux is not a supported
+platform — see the platform note at the top of this guide — and nobody tests it. The job carries
+`continue-on-error`, so its bundle is attached when it builds and ignored when it does not; a broken
+Linux job never withholds the macOS and Windows installers.
 
 ### Action pinning
 

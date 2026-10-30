@@ -1,6 +1,10 @@
 [package]
 name = "ia-toolbox"
-version = "0.1.0"
+# Cargo requires a version, but the app's is read from package.json via
+# tauri.conf.json so that Changesets has a single file to bump. Tauri only falls
+# back to this one when tauri.conf.json sets none, and 0.0.0 makes a regression
+# to that fallback obvious in a bundle instead of plausible.
+version = "0.0.0"
 description = "Local document tools"
 edition = "2021"
 
