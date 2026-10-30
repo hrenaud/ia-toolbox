@@ -3,12 +3,50 @@
  * Run with: npx vitest run scripts/build-local.test.mjs
  */
 
+import { fileURLToPath } from "node:url";
+
 import { describe, it, expect } from "vitest";
 import {
   commandExists,
   getPyInstallerCommand,
   getSidecarFilename,
+  isDirectInvocation,
 } from "./build-local.mjs";
+
+// This guard decides whether the script does anything at all. When it is wrong
+// the script exits 0 having built nothing, and the failure only surfaces much
+// later, as a Tauri bundle complaining about a missing sidecar — which is
+// exactly how it was found, on a release build.
+describe("isDirectInvocation", () => {
+  it("recognises a POSIX path", () => {
+    expect(
+      isDirectInvocation(
+        "file:///Users/dev/ia-toolbox/scripts/build-local.mjs",
+        "/Users/dev/ia-toolbox/scripts/build-local.mjs",
+      ),
+    ).toBe(true);
+  });
+
+  // The Windows case cannot be written as a literal here: the conversion is
+  // platform-dependent, and a POSIX host reads "D:\a\..." as a relative path.
+  // This round-trip stands in for it — it holds on any platform, and on the
+  // Windows runner it is what catches a guard that concatenates the path onto
+  // "file://" instead of converting it.
+  it("recognises this module's own invocation on any platform", () => {
+    expect(
+      isDirectInvocation(import.meta.url, fileURLToPath(import.meta.url)),
+    ).toBe(true);
+  });
+
+  it("rejects a different module", () => {
+    expect(
+      isDirectInvocation(
+        "file:///Users/dev/ia-toolbox/scripts/build-local.mjs",
+        "/Users/dev/ia-toolbox/scripts/other.mjs",
+      ),
+    ).toBe(false);
+  });
+});
 
 describe("getPyInstallerCommand", () => {
   // PyInstaller lives in the `build` dependency group, which `uv` does not

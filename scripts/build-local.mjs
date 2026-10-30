@@ -12,7 +12,7 @@
 import { execSync } from "child_process";
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
@@ -226,7 +226,19 @@ async function main() {
   }
 }
 
-// Only run main if this script is invoked directly, not when imported for testing
-if (import.meta.url === `file://${process.argv[1]}`) {
+/**
+ * Whether this module was run as a script rather than imported by the tests.
+ *
+ * The path has to go through pathToFileURL. Concatenating it after "file://"
+ * works on POSIX only because the path starts with a slash; a Windows path
+ * yields "file://D:\a\..." against an import.meta.url of "file:///D:/a/...",
+ * which never matches. The script then did nothing, exited 0, and the build
+ * failed several minutes later on a sidecar that was never produced.
+ */
+export function isDirectInvocation(moduleUrl, scriptPath) {
+  return moduleUrl === pathToFileURL(scriptPath).href;
+}
+
+if (isDirectInvocation(import.meta.url, process.argv[1])) {
   main();
 }
