@@ -31,11 +31,12 @@ jobs:
     # when it does not, so a broken Linux job never withholds the macOS and
     # Windows installers that users actually depend on.
     continue-on-error: ${{ matrix.bestEffort == true }}
-    # Holds the signing secrets. Configure required reviewers on the `release`
-    # environment (Settings -> Environments) so they are only ever handed to an
-    # approved run. Third-party actions below are pinned to commit SHAs for the
-    # same reason: a mutable tag could be repointed at code that exfiltrates
-    # the Apple certificate or the updater private key.
+    # A hook for gating the signing secrets, not a requirement: GitHub creates
+    # this environment on first use with no rules, and repository secrets reach
+    # the job either way. Add required reviewers once more than one person can
+    # push. Third-party actions below are pinned to commit SHAs regardless — a
+    # mutable tag could be repointed at code that exfiltrates the Apple
+    # certificate or the updater private key, which no approval gate catches.
     environment: release
     strategy:
       fail-fast: false

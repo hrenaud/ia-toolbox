@@ -351,9 +351,14 @@ Actions under `actions/` are GitHub-owned and left on major tags.
 
 ### Secrets
 
-The release job declares `environment: release`. Create that environment under Settings →
-Environments and add required reviewers: the signing secrets are then only handed to a run someone
-approved. Scope the secrets to that environment rather than to the repository.
+Repository secrets are enough to build and sign. The release job also declares
+`environment: release`, which GitHub creates on first use with no rules attached — it is a hook, not
+a requirement.
+
+Use it once more than one person can push: add required reviewers under Settings → Environments and
+move the secrets there. The signing secrets are then only handed to a run someone approved, and no
+other workflow can read them. On a single-maintainer repository that gate protects against nothing
+that `main` write access doesn't already allow.
 
 All of these are optional. Without them the workflow still produces unsigned bundles, which is what
 forks and local builds get.
