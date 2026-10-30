@@ -310,6 +310,13 @@ Nothing to do by hand. Merging a changeset to `main` does not release:
 
 The version PR is the release gate: until it is merged, nothing ships.
 
+**Its checks will not run on their own.** The pull request is opened by `github-actions[bot]`, and
+GitHub holds workflow runs on bot-authored pull requests in `action_required` until a human presses
+**Approve and run** on the Checks tab. This is per pull request, so it recurs on every release.
+Either approve it each time, or relax Settings → Actions → General → _Fork pull request workflows
+from outside collaborators_. Approving by hand is the safer default; the quality gate has already
+run on the commits being released, since they reached `main` through their own pull requests.
+
 **The tag alone does not start the build.** A tag pushed with `GITHUB_TOKEN` does not trigger a
 workflow run, so `release.yml` is called directly by `version.yml` via `workflow_call`. Its
 `push: tags` trigger still covers a tag pushed by a human. If the hand-off ever fails, the tag is
