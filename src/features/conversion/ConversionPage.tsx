@@ -9,6 +9,7 @@ import {
   type ConversionJob,
   type FormatInfo,
 } from "./conversionApi";
+import { describeJobError } from "./jobErrors";
 import {
   isSupportedFormat,
   requiresOptionalComponent,
@@ -145,7 +146,7 @@ export function ConversionPage({ locale }: ConversionPageProps) {
       setStatusMessage(`${t["conversion.successfullyConverted"]} ${basename}`);
     } else if (job.status === "error") {
       setStatusMessage(
-        `${t["conversion.errorConverting"]} ${basename}: ${job.message || t["conversion.unknownError"]}`,
+        `${t["conversion.errorConverting"]} ${basename}: ${describeJobError(job, t)}`,
       );
     }
   };
@@ -387,7 +388,9 @@ export function ConversionPage({ locale }: ConversionPageProps) {
                     />
                   </div>
                 )}
-                {job.message && <p className="job-message">{job.message}</p>}
+                {job.status === "error" && (
+                  <p className="job-message">{describeJobError(job, t)}</p>
+                )}
                 {job.outputPath && (
                   <p className="output-file">
                     {t["conversion.outputPath"]} <code>{job.outputPath}</code>

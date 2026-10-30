@@ -96,7 +96,7 @@ Show actionable, plain-language messages for unsupported formats, missing option
 - Test representative supported formats and unsupported ODT behavior.
 - Test single-file and batch jobs, per-file failures, progress/result reporting, and preservation of source files.
 - For anonymization, test French and English detections, each operator, review/selection behavior, and output formatting for DOCX, XLSX, and PPTX fixtures.
-- Test offline processing with network access unavailable after the app and optional components are installed.
+- Keep document processing local by construction rather than by an offline test. Assert that the pinned dependency closure contains no cloud or remote-service client, which is what makes processing local; a passing offline run would only show that no call happened on that run. Network access remains legitimate outside processing, for installation, update checks, and the optional OCR model download.
 - Test language detection and manual override, system/light/dark theme selection, updater signature handling, and OCR prerequisite messaging.
 - Verify packaged macOS and Windows builds. Confirm the Python engine and optional model can be installed and launched without opening a terminal.
 - Manually check keyboard navigation and assistive-technology announcements in the main workflows.

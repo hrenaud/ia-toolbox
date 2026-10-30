@@ -86,6 +86,21 @@ Specifically, avoid these failure modes, all of which have happened here:
   catalog and fail if a declared format has no fixture.
 - **Verifying only the easy case.** Checking `.csv` and stopping hid five formats whose readers were
   not installed at all.
+- **Fixtures built from the same assumption as the code.** A hand-built binary fixture and the
+  parser that reads it share one mental model, so both can be wrong together and still agree. The
+  encryption detection was written against hand-built compound files, then checked against documents
+  Word, Excel and PowerPoint actually saved — which is what revealed that "protected" has two
+  unrelated meanings.
+
+### Fixtures
+
+Build fixtures programmatically inside the test module, as `test_conversion_e2e.py` does for all 16
+declared formats. Keeping them in code makes them reviewable and keeps binaries out of the history.
+
+`python/tests/fixtures/` is the one exception, and it is documented in its own README: no library in
+the dependency closure can produce an encrypted Office document, so the only way to test against
+what Office writes is to commit three such files. Do not grow this directory for a case a writer
+could cover.
 
 ### The gate
 
@@ -143,6 +158,11 @@ markitdown[docx,pdf,pptx,xls,xlsx]==0.1.6
 along with audio and YouTube transcription that no supported format needs. If you add a format, add
 the one extra it requires and verify the resulting dependency closure contains no cloud SDK.
 
+`python/tests/test_dependency_closure.py` enforces this: it walks the installed distributions and
+fails on any Azure, AWS, Google Cloud, model-provider or speech client. That check — not an
+"offline" test run — is what makes processing local. A passing offline run would only prove that no
+call happened on that run; an empty closure proves none can.
+
 OpenDocument formats, including `.odt`, are deliberately unsupported. OCR and image description are
 out of scope, and must not be added by calling out to a service.
 
@@ -161,6 +181,38 @@ Two invariants protect this channel:
 - **`console=True` in `python/packaging/worker.spec` is correct.** A PyInstaller windowed binary has
   no stdio at all, which would break the protocol outright. Do not "fix" it. The guarantee that no
   console window appears comes from how Tauri spawns the sidecar on Windows, not from the spec.
+
+### Per-file errors must be specific and translated
+
+Every failure the worker reports carries an `error_code`. The UI translates it through
+`conversion.failure.<code>` in `src/app/locales/`, and `src/features/conversion/jobErrors.test.ts`
+fails if a code listed in `WORKER_ERROR_CODES` has no French and English string. The worker's own
+English `message` is only a fallback for a code the frontend does not know yet.
+
+Resist widening `processing_failed`. Collapsing distinct causes into it is how five formats with
+missing readers stayed invisible for a whole task cycle, and it is why a password-protected file
+once told users to "check file and folder access" — advice that cannot help, since the file is
+readable and the permissions are fine.
+
+A password-protected DOCX/XLSX/PPTX is recognised from its bytes before conversion: MS-OFFCRYPTO
+stores the package inside an OLE2 compound file holding an `EncryptedPackage` stream, so the file is
+not the ZIP archive its extension promises. The suite's fixtures are hand-built, because no
+installed library can produce an encrypted document, but the path is also checked against real files
+saved by Word, Excel and PowerPoint in `test_conversion_encrypted_real.py`. In those files
+the marker sat near the start (offset 1152, and 8320 in a 643 KB deck), so the head window is what
+matches in practice; the tail window covers the layout the format permits but Office does not
+produce.
+
+Two boundaries matter here:
+
+- **Encryption is not the same as an editing lock.** Excel's "protect workbook structure" and Word's
+  "restrict editing" leave an ordinary ZIP whose content is in the clear; `xl/workbook.xml` simply
+  gains a `<workbookProtection … lockStructure="1"/>` element whose hash validates a password rather
+  than decrypting anything. Such a file converts, and must keep converting — refusing a document we
+  can read would block a legitimate conversion. Only a password demanded _to open_ the file produces
+  the compound-file wrapper.
+- **`.xls` is excluded on purpose.** Excel 97-2003 is legitimately a compound file, so the magic
+  proves nothing there and a protected legacy workbook still reports `processing_failed`.
 
 ### Never overwrite user files
 

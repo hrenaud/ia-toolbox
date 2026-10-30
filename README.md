@@ -23,6 +23,16 @@ The following formats are supported for conversion to Markdown:
 
 **OpenDocument formats, including `.odt` (ODT), are not supported.**
 
+**Documents that need a password to open cannot be converted.** A PDF, Word, Excel or PowerPoint
+file encrypted with an open-password is reported as protected, so you can remove the protection in
+the original application and save a copy.
+
+A document that is merely locked against editing — Excel's "protect workbook structure", Word's
+"restrict editing" — is not encrypted and converts normally. Legacy `.xls` workbooks are an
+exception: a protected one is reported only as unreadable.
+
+In every case the original file is left untouched and the rest of the batch continues.
+
 ## Prerequisites
 
 - **macOS or Windows** (Intel or Apple Silicon on macOS)

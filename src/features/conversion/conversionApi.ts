@@ -21,6 +21,9 @@ export interface ConversionJob {
   outputPath?: string;
   status: "queued" | "running" | "success" | "error";
   progress?: number;
+  /** The worker's error code, used to pick a translated message. */
+  errorCode?: string;
+  /** The worker's own English message, kept as a fallback for unknown codes. */
   message?: string;
 }
 
@@ -101,6 +104,7 @@ export async function startConversion(
               id,
               inputPath,
               status: "error",
+              errorCode: result.error_code,
               message: result.message,
             });
           }

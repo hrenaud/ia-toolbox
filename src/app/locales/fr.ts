@@ -67,4 +67,17 @@ export const fr: Record<keyof typeof en, string> = {
   "conversion.errorPrefix": "Erreur :",
   "conversion.removeFile": "Supprimer",
   "conversion.closeError": "Fermer l’erreur",
+  // Échecs par fichier signalés par le moteur, indexés par son code d’erreur
+  "conversion.failure.input_not_found":
+    "Ce fichier est introuvable. Il a peut-être été déplacé ou renommé.",
+  "conversion.failure.invalid_output_directory":
+    "Le dossier de sortie n’est plus disponible. Sélectionnez un autre dossier.",
+  "conversion.failure.unsupported_format":
+    "Ce format n’est pas pris en charge. Choisissez un des formats pris en charge.",
+  "conversion.failure.password_protected":
+    "Ce fichier est protégé par un mot de passe. Retirez la protection dans l’application d’origine, enregistrez une copie, puis réessayez.",
+  "conversion.failure.processing_failed":
+    "Ce fichier n’a pas pu être lu. Il est peut-être endommagé ou incomplet.",
+  "conversion.failure.write_failed":
+    "Le fichier Markdown n’a pas pu être écrit. Vérifiez que vous pouvez écrire dans le dossier de sortie.",
 };

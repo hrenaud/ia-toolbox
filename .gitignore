@@ -7,3 +7,4 @@ src-tauri/binaries/
 python/build/
 python/dist/
 .DS_Store
+tmp/

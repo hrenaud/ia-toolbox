@@ -61,4 +61,17 @@ export const en = {
   "conversion.errorPrefix": "Error:",
   "conversion.removeFile": "Remove",
   "conversion.closeError": "Close error",
+  // Per-file failures reported by the worker, keyed by its error code
+  "conversion.failure.input_not_found":
+    "This file could not be found. It may have been moved or renamed.",
+  "conversion.failure.invalid_output_directory":
+    "The output folder is no longer available. Select another folder.",
+  "conversion.failure.unsupported_format":
+    "This format is not supported. Choose one of the supported formats.",
+  "conversion.failure.password_protected":
+    "This file is protected by a password. Remove the protection in the original application, save a copy, then retry.",
+  "conversion.failure.processing_failed":
+    "This file could not be read. It may be damaged or incomplete.",
+  "conversion.failure.write_failed":
+    "The Markdown file could not be written. Check that you can write to the output folder.",
 };
