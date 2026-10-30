@@ -48,39 +48,53 @@ export function ConversionPage({ locale }: ConversionPageProps) {
         setFormatsLoaded(true);
       });
 
-    // Set up drag/drop listener (only in actual Tauri app, not in tests)
-    let unlistenDragDrop: (() => void) | null = null;
+    return () => {
+      void stopClient();
+    };
+  }, [t]);
+
+  // Native drag and drop, in its own effect with no dependencies: it must
+  // subscribe exactly once for the lifetime of the page. Sharing the effect
+  // above would tie it to the dictionary and re-subscribe on every language
+  // change.
+  useEffect(() => {
+    // Subscribing is asynchronous, and under StrictMode this effect's cleanup
+    // runs before the promise settles. The flag is what makes that case
+    // unsubscribe rather than leave a second handler attached, which showed up
+    // as every dropped file being added to the list twice.
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+
     try {
-      const webview = getCurrentWebview();
-      if (webview) {
-        void webview
-          .onDragDropEvent((event) => {
-            if (event.payload.type === "drop") {
-              const paths = event.payload.paths;
-              if (paths && paths.length > 0) {
-                setSelectedFiles((prev) => [...prev, ...paths]);
-                setError(null);
-              }
-            }
-          })
-          .then((unlisten) => {
-            unlistenDragDrop = unlisten;
-          })
-          .catch((err) => console.error("Failed to set up drag/drop:", err));
-      }
+      void getCurrentWebview()
+        .onDragDropEvent((event) => {
+          if (event.payload.type !== "drop") return;
+          const paths = event.payload.paths;
+          if (paths && paths.length > 0) {
+            setSelectedFiles((prev) => [...prev, ...paths]);
+            setError(null);
+          }
+        })
+        .then((unsubscribe) => {
+          if (cancelled) {
+            void unsubscribe();
+            return;
+          }
+          unlisten = unsubscribe;
+        })
+        .catch((err) => console.error("Failed to set up drag/drop:", err));
     } catch (err) {
-      // Drag/drop is not available in test environment
+      // Drag/drop is not available in the test environment
       console.debug("Drag/drop not available:", err);
     }
 
     return () => {
-      void stopClient();
-      // Unlisten is async and fires in the background
-      if (unlistenDragDrop) {
-        unlistenDragDrop();
+      cancelled = true;
+      if (unlisten) {
+        void unlisten();
       }
     };
-  }, [t]);
+  }, []);
 
   const handleSelectFiles = async () => {
     try {
