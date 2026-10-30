@@ -1,0 +1,19 @@
+# Check every text file out with LF, on Windows too. Git would otherwise hand a
+# Windows runner CRLF working copies, and Prettier — which expects LF and is not
+# configured otherwise — then reports every file in the repository as badly
+# formatted. The quality gate fails on Windows and passes on macOS, for a
+# difference that exists only in the checkout.
+* text=auto eol=lf
+
+# Conversion fixtures. text=auto already detects these as binary, but a corrupt
+# fixture is a confusing failure to diagnose, so it is stated rather than relied
+# upon.
+*.docx binary
+*.xlsx binary
+*.pptx binary
+*.xls binary
+*.pdf binary
+*.epub binary
+*.png binary
+*.ico binary
+*.icns binary
