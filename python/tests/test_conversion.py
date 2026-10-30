@@ -1,9 +1,23 @@
 """Test document conversion using the MarkItDown adapter."""
 
 import json
+import sys
 from pathlib import Path
 
+import pytest
+
 from document_worker.conversion import convert_file
+
+# chmod does not remove access on Windows: clearing a file's mode only toggles
+# the read-only attribute, which still permits reading, and a read-only
+# directory still accepts new files. The two tests below cannot create the
+# condition they assert on, so they would pass vacuously rather than fail. The
+# code they cover catches OSError and is not platform-specific; what is missing
+# on Windows is the means to provoke it, which would take an ACL change.
+needs_posix_permissions = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="chmod cannot make a file unreadable or a directory unwritable on Windows",
+)
 
 
 class TestConversionSuccess:
@@ -251,6 +265,7 @@ class TestErrorMessages:
         assert "Exception" not in message
         assert "<" not in message  # No stack frames
 
+    @needs_posix_permissions
     def test_unreadable_file_error(self, tmp_path):
         """Should handle permission errors gracefully."""
         source = tmp_path / "restricted.txt"
@@ -267,6 +282,7 @@ class TestErrorMessages:
             # Cleanup: restore permissions
             source.chmod(0o644)
 
+    @needs_posix_permissions
     def test_write_failed_read_only_directory(self, tmp_path):
         """Should handle write failures (e.g., read-only output directory)."""
         source = tmp_path / "test.txt"

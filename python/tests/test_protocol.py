@@ -10,6 +10,22 @@ def request(operation="list_formats", **fields):
     return {"id": str(uuid4()), "operation": operation, **fields}
 
 
+# Scripts that monkeypatch the converter have to import markitdown at the top,
+# before calling main(). The worker itself imports it lazily, after installing
+# its output isolation (see document_worker/main.py), so this forced-early
+# import drags the import-time warnings of markitdown's own dependencies out
+# ahead of that isolation. That noise belongs to the environment rather than to
+# the worker — onnxruntime emits one on any Windows release it does not
+# recognise — and it would otherwise fail the `stderr == ""` assertions below,
+# which exist to catch output the worker lets escape, not output it never saw.
+QUIET_MARKITDOWN_IMPORT = """
+import warnings
+with warnings.catch_warnings():
+    warnings.simplefilter('ignore')
+    from markitdown import MarkItDown
+"""
+
+
 def run_worker(lines, script=None):
     return subprocess.run(
         [sys.executable, "-c", script]
@@ -179,11 +195,11 @@ def test_converter_diagnostics_and_exceptions_never_leak(tmp_path, fails):
     process = run_worker(
         [json.dumps(conversion), json.dumps(discovery)],
         script=f"fails = {fails!r}\n"
+        + QUIET_MARKITDOWN_IMPORT
         + r"""
 import os
 import sys
 from types import SimpleNamespace
-from markitdown import MarkItDown
 from document_worker.main import main
 def fail(*args, **kwargs):
     print('private document')
@@ -245,17 +261,21 @@ def test_buffered_libc_output_cannot_escape_after_conversion(tmp_path, fails):
     process = run_worker(
         [json.dumps(conversion)],
         script=f"fails = {fails!r}\n"
+        + QUIET_MARKITDOWN_IMPORT
         + r"""
 import ctypes
 import os
 from types import SimpleNamespace
-from markitdown import MarkItDown
 from document_worker.main import main
 libc = ctypes.CDLL('ucrtbase' if os.name == 'nt' else None)
-libc.printf.argtypes = [ctypes.c_char_p]
+# puts rather than printf: the Windows C runtime defines printf inline in its
+# headers and exports no such symbol, so ucrtbase.printf does not exist. puts
+# is a real export on both platforms and buffers the same way, which is what
+# this test is actually about.
+libc.puts.argtypes = [ctypes.c_char_p]
 libc.fflush.argtypes = [ctypes.c_void_p]
 def convert(*args, **kwargs):
-    libc.printf(b'BUFFERED_LIBC_SECRET')
+    libc.puts(b'BUFFERED_LIBC_SECRET')
     if fails:
         raise RuntimeError('private error')
     return SimpleNamespace(text_content='converted')
