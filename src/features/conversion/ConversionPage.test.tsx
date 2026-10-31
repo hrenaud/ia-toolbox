@@ -1,4 +1,5 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ConversionPage } from "./ConversionPage";
@@ -11,11 +12,38 @@ vi.mock("./conversionApi");
 // Mock Tauri dialog and webview
 vi.mock("@tauri-apps/plugin-dialog");
 
+/**
+ * Stands in for the webview's native drag and drop subscription.
+ *
+ * It keeps the set of live handlers and honours the unlisten function it hands
+ * back, because that is where the interesting behaviour is: registration is
+ * asynchronous, so a component that unmounts before its promise settles can
+ * leave a handler behind. Resolving to a no-op unlisten, as this mock used to,
+ * makes that leak invisible.
+ */
+const webview = vi.hoisted(() => {
+  const handlers = new Set<(event: unknown) => void>();
+  return {
+    handlers,
+    onDragDropEvent: vi.fn((handler: (event: unknown) => void) => {
+      handlers.add(handler);
+      return Promise.resolve(() => handlers.delete(handler));
+    }),
+  };
+});
+
 vi.mock("@tauri-apps/api/webview", () => ({
-  getCurrentWebview: () => ({
-    onDragDropEvent: vi.fn(() => Promise.resolve(() => {})),
-  }),
+  getCurrentWebview: () => webview,
 }));
+
+/** Deliver a native drop to every handler currently subscribed. */
+function dropFiles(paths: string[]): void {
+  act(() => {
+    for (const handler of webview.handlers) {
+      handler({ payload: { type: "drop", paths } });
+    }
+  });
+}
 
 /**
  * The selected-files list and the job list both show the basename, so job
@@ -38,6 +66,7 @@ function jobItem(basename: string): HTMLElement {
 let media: EventTarget & { matches: boolean };
 beforeEach(() => {
   vi.clearAllMocks();
+  webview.handlers.clear();
   media = Object.assign(new EventTarget(), { matches: false });
   vi.stubGlobal("matchMedia", () => media);
 });
@@ -89,6 +118,33 @@ describe("ConversionPage", () => {
     expect(screen.getByText(/drag.*files here/i)).toBeInTheDocument();
     const selectButton = screen.getByRole("button", { name: /select files/i });
     expect(selectButton).toHaveClass("file-select-button");
+  });
+
+  // Subscribing is asynchronous and the component used to keep the unlisten
+  // function in a variable the cleanup read synchronously. Under StrictMode the
+  // first mount is discarded before its promise settles, so the cleanup found
+  // nothing to unlisten and that handler stayed subscribed alongside the second
+  // one. A dropped file then landed in the list twice, while the file picker
+  // next to the drop zone — which goes through no listener — added it once.
+  it("adds a dropped file once when mounted under StrictMode", async () => {
+    vi.mocked(conversionApi.loadSupportedFormats).mockResolvedValue([
+      { extension: ".pdf", label: "PDF", requiresOptionalComponent: false },
+    ]);
+
+    render(
+      <StrictMode>
+        <ConversionPage locale="en" />
+      </StrictMode>,
+    );
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /select files/i }),
+      ).toBeInTheDocument();
+    });
+
+    dropFiles(["/tmp/report.pdf"]);
+
+    expect(screen.getAllByText("report.pdf")).toHaveLength(1);
   });
 
   it("shows status region with aria-live for accessibility", async () => {

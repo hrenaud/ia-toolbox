@@ -77,3 +77,26 @@ describe("changesets configuration", () => {
     expect(manifest.workspaces).toBeUndefined();
   });
 });
+
+describe("macOS signing entitlements", () => {
+  // The worker is a PyInstaller onefile binary: it unpacks its own libraries
+  // into a temporary directory and dlopens them at startup. Tauri signs it with
+  // the hardened runtime, which notarization requires, and those unpacked
+  // libraries carry the signature PyInstaller gave them rather than this team's.
+  // Library validation then refuses to map them and the worker dies before it
+  // reads a single request.
+  //
+  // Nothing catches this short of launching a signed bundle: an unsigned local
+  // build has no hardened runtime, and CI only checks that the bundle was
+  // produced. It shipped in v0.2.1, where every format the app offers failed to
+  // load.
+  it("grants the worker the library validation exemption it needs", () => {
+    const tauriConfig = readJson("src-tauri/tauri.conf.json");
+    const entitlementsPath = tauriConfig.bundle?.macOS?.entitlements;
+
+    expect(entitlementsPath).toBeDefined();
+    expect(read(join("src-tauri", entitlementsPath))).toContain(
+      "com.apple.security.cs.disable-library-validation",
+    );
+  });
+});

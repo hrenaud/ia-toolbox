@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The document worker is a PyInstaller onefile binary. It unpacks libpython and
+  the rest of its dependencies into a temporary directory at startup and dlopens
+  them from there. Those copies keep the signature PyInstaller gave them, not
+  this team's, so under the hardened runtime that notarization requires, library
+  validation refuses to map them:
+
+    libpython3.12.dylib ... mapping process and mapped file (non-platform)
+    have different Team IDs
+
+  The worker then exits before reading a request, and the app reports only that
+  it cannot load the list of supported formats.
+
+  This is the narrowest exemption that fixes it. It applies to the whole bundle,
+  which is a real cost: the main binary also stops checking who signed what it
+  loads. Removing the need for it means dropping onefile packaging, so that the
+  libraries live inside the bundle and are signed with it.
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>

@@ -383,6 +383,26 @@ forks and local builds get.
 
 Windows packages are intentionally unsigned for now.
 
+### Why the macOS bundle disables library validation
+
+`src-tauri/Entitlements.plist` grants `com.apple.security.cs.disable-library-validation`, and the
+app does not work on macOS without it.
+
+Notarization requires the hardened runtime, and Tauri signs sidecars as executables, so the main
+binary and the worker both get it. The worker is a PyInstaller _onefile_ binary: at startup it
+unpacks `libpython3.12.dylib` and its other dependencies into a temporary directory and `dlopen`s
+them from there. Those copies carry the signature PyInstaller gave them, not this team's, so library
+validation refuses to map them — "mapping process and mapped file (non-platform) have different Team
+IDs". The worker exits before reading its first request and the app reports only that it cannot load
+the list of supported formats.
+
+Nothing short of launching a signed bundle catches this: a local build has no hardened runtime, and
+CI only checks that the bundle was produced. It shipped in 0.2.1.
+
+The entitlement applies to the whole bundle, which is the real cost — the main binary also stops
+checking who signed what it loads. Removing the need for it means dropping onefile packaging so the
+libraries live inside the bundle and are signed with it.
+
 ### Updater: not yet wired
 
 The updater secrets above are plumbed through the workflow, but **they currently produce nothing**.

@@ -19,6 +19,9 @@
     "active": true,
     "targets": "all",
     "icon": ["icons/icon.png", "icons/icon.ico"],
-    "externalBin": ["binaries/document-worker"]
+    "externalBin": ["binaries/document-worker"],
+    "macOS": {
+      "entitlements": "./Entitlements.plist"
+    }
   }
 }
