@@ -1,5 +1,27 @@
 # ia-toolbox
 
+## 0.2.2
+
+### Patch Changes
+
+- fa0784d: A file dropped onto the conversion page is added to the list once, not twice.
+  The page subscribed to native drag and drop inside the effect that loads the
+  format catalog, and read the unsubscribe function synchronously in the cleanup
+  even though subscribing is asynchronous — so a cleanup that ran before the
+  subscription settled left a second handler attached, and every drop was
+  counted by both.
+- af37d6e: The macOS app can load its list of supported formats again, and convert files.
+  The signed bundle was refusing to start its document worker: notarization
+  requires the hardened runtime, under which macOS declined to load the Python
+  libraries the worker unpacks at startup because they do not carry this team's
+  signature. The worker died silently and every conversion was unavailable. The
+  bundle now ships the entitlement that exempts those libraries.
+- bafa7c4: Dropping files onto the drop zone of the Markdown conversion page works again.
+  The window's capability granted no core permissions, so the page's request to
+  listen for native drag and drop events was rejected at the IPC boundary. The
+  rejection went to the console and the zone stayed inert, while the file picker
+  beside it kept working.
+
 ## 0.2.1
 
 ### Patch Changes
