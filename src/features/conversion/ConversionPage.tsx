@@ -5,7 +5,6 @@ import { dictionaries, type Locale } from "../../app/i18n";
 import {
   loadSupportedFormats,
   startConversion,
-  stopClient,
   type ConversionJob,
   type FormatInfo,
 } from "./conversionApi";
@@ -35,7 +34,10 @@ export function ConversionPage({ locale }: ConversionPageProps) {
   const shouldFocusError = useRef(false);
   const t = dictionaries[locale];
 
-  // Load supported formats on mount
+  // Load supported formats on mount. The worker is not stopped on unmount: it
+  // is shared with anonymization and outlives this page, so switching workflow
+  // would kill the process the next page is about to ask for. `AppShell` owns
+  // its lifetime.
   useEffect(() => {
     loadSupportedFormats()
       .then((loaded) => {
@@ -47,10 +49,6 @@ export function ConversionPage({ locale }: ConversionPageProps) {
         setError(t["conversion.formatLoadError"]);
         setFormatsLoaded(true);
       });
-
-    return () => {
-      void stopClient();
-    };
   }, [t]);
 
   // Native drag and drop, in its own effect with no dependencies: it must

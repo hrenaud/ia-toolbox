@@ -1,4 +1,4 @@
-import { getClient, stopClient } from "../../app/worker/sharedClient";
+import { getClient } from "../../app/worker/sharedClient";
 import type { FormatInfo as WorkerFormatInfo } from "../../app/worker/sidecarClient";
 
 /**
@@ -110,9 +110,6 @@ export async function startConversion(
     throw mapError(err);
   }
 }
-
-/** Stop the sidecar client (cleanup on app shutdown). */
-export { stopClient };
 
 function getErrorMessage(err: unknown): string {
   if (err instanceof Error) {

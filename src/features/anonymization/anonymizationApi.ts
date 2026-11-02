@@ -1,4 +1,4 @@
-import { getClient, stopClient } from "../../app/worker/sharedClient";
+import { getClient } from "../../app/worker/sharedClient";
 import {
   WorkerError,
   type AnalyzedUnit,
@@ -141,6 +141,3 @@ export async function anonymizeDocuments(
     }
   }
 }
-
-/** Stop the shared worker, on page teardown. */
-export { stopClient };

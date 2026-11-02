@@ -305,6 +305,13 @@ name split across three runs.
 The page uses the **shared** sidecar client (`src/app/worker/sharedClient.ts`), the same one
 conversion uses. A second process would load the detection models a second time.
 
+`AppShell` owns that worker's lifetime, and no page may stop it. A page that killed the worker on
+unmount would kill the process the next page is about to ask for — switching workflow then opened
+with "could not load the formats". For the same reason `getClient()` caches the _starting_ promise,
+not the started client, and `stopClient()` drops its reference before awaiting the kill: two callers
+racing a spawn would otherwise get two processes, and a caller arriving during a stop would be
+handed a worker already told to fail.
+
 ### Never overwrite user files
 
 Output goes to the selected destination folder using the input file's base name with a `.md`

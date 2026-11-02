@@ -7,7 +7,6 @@ import {
   analyzeDocuments,
   anonymizeDocuments,
   loadAnonymizationFormats,
-  stopClient,
   type AnalyzedDocument,
 } from "./anonymizationApi";
 import { ReviewList } from "./ReviewList";
@@ -48,14 +47,13 @@ export function AnonymizationPage({ locale }: AnonymizationPageProps) {
   const shouldFocusError = useRef(false);
   const t = dictionaries[locale];
 
+  // The worker is not stopped here: it is shared with conversion and outlives
+  // this page, so switching workflow would kill the process the next page is
+  // about to ask for. `AppShell` owns its lifetime.
   useEffect(() => {
     loadAnonymizationFormats()
       .then(setFormats)
       .catch(() => setError(t["anonymization.formatLoadError"]));
-
-    return () => {
-      void stopClient();
-    };
   }, [t]);
 
   // Native drag and drop, subscribed exactly once for the lifetime of the
