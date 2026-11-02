@@ -199,6 +199,18 @@ Two invariants protect this channel:
 - **`console=True` in `python/packaging/worker.spec` is correct.** A PyInstaller windowed binary has
   no stdio at all, which would break the protocol outright. Do not "fix" it. The guarantee that no
   console window appears comes from how Tauri spawns the sidecar on Windows, not from the spec.
+- **A library that loads data by name must be collected by name.** PyInstaller follows imports; it
+  does not follow `spacy.load("fr_core_news_sm")`, and presidio builds its recognizer registry by
+  walking modules. A worker frozen without them starts, answers `list_anonymization_formats`, and
+  dies on the first `analyze` with **no message at all** — output isolation has already taken stderr
+  away, so the only symptom is exit code 2. `DETECTION_PACKAGES` in the spec is what prevents that,
+  and `tests/test_packaging_spec.py` asserts it against `detection._MODELS` rather than against a
+  second copy of the list. Changing the model the detector loads means changing both, and the test
+  is what says so. The collected models cost about 30 MB of binary.
+
+Output isolation makes a packaged worker silent when it breaks, so test the **binary**, not only the
+source: `pnpm dev:worker`, then pipe a request into `src-tauri/binaries/document-worker-<triple>` and
+check the exit code. A green pytest run proves nothing about what PyInstaller put in the bundle.
 
 ### Per-file errors must be specific and translated
 
@@ -250,6 +262,26 @@ complete for two tiers, and three boundaries in them are easy to break by accide
   (`rewritable=False`), tracked changes, and document properties. `DocumentAdapter.apply()` raises
   rather than writing an edit that targets them. Making one of these writable is a spec decision,
   not a bug fix — renaming a sheet turns every reference to it into `#REF!`.
+
+**Syntax is not content, and a detector handed syntax gets the content wrong too.** Markdown was
+first treated as plain text, on the argument that not parsing means not re-rendering. That was two
+bugs. An email inside a fenced code block was offered for replacement although the README promises
+code is not analyzed; and the markers themselves wrecked the sentences around them —
+`**Lieu :** Nantes, salle Loire` yielded `salle` as a person, and a table row analyzed whole came
+back with the closing pipe inside the span, so replacing a name deleted the cell boundary.
+`_MarkdownAdapter` splits the file into the stretches that carry content and the stretches that
+carry structure, keeps both in `payload`, and builds the `TextMap` over the first kind only. It
+still does not parse into a tree and still does not re-render: a copy with no edits is byte-identical,
+and that is the first test of the class. The same reasoning applies to any format added later —
+exclude the syntax from what is analyzed rather than hoping the model ignores it.
+
+**No detection may cross a line break.** The breaks in a unit's text are largely not the document's:
+an adapter inserts one between a heading and the paragraph under it, or between two table cells, so
+that the last word of one block cannot fuse with the first of the next. The small French model runs
+names across that break anyway, and one replacement over such a span writes the pseudonym into the
+first block and _empties_ the second — the heading disappears. `detection.line_spans()` cuts every
+result at its line breaks and trims each piece, so both halves survive; truncating to the first line
+instead would silently drop a real name.
 
 Adapters emit **codes**, never sentences: notes (`markup_code_not_analyzed`,
 `tracked_changes_not_rewritten`, `document_properties_not_rewritten`, `xlsx_shared_strings_reused`,

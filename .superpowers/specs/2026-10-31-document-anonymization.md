@@ -226,7 +226,7 @@ not-processed report:
 
 | Code                                | Meaning                                                                                                                    |
 | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `markup_code_not_analyzed`          | HTML/XML comments, `<script>` and `<style>` content were not analyzed.                                                     |
+| `markup_code_not_analyzed`          | HTML/XML comments, `<script>` and `<style>` content, Markdown code blocks and code spans were not analyzed.                |
 | `xml_attributes_not_analyzed`       | An XML document has attribute values; unlike HTML there is no way to tell visible text from metadata, so they are skipped. |
 | `tracked_changes_not_rewritten`     | The document has revisions (`w:delText`, `w:ins`); accepting them later can bring the personal data back.                  |
 | `document_properties_not_rewritten` | `docProps/core.xml` or `app.xml` holds text — author, company, title.                                                      |
@@ -316,6 +316,35 @@ Three rules that are not optional:
   every offset after it — but does insert one at paragraph, cell and slide
   boundaries, without which the last word of one and the first of the next
   concatenate into phantom detections.
+
+## Syntax is not content
+
+A tier A format carries its structure in the same characters as its text, and
+the first Markdown adapter handed the raw file to the model. That costs twice.
+An email inside a fenced code block is offered for replacement although this
+spec says code is not analyzed; and the syntax wrecks the sentences around it,
+so `**Lieu :** Nantes, salle Loire` yields `salle` as a person and a table cell
+comes back with its closing pipe inside the span.
+
+So the Markdown adapter splits the file into content and structure, and builds
+the `TextMap` over the content only. Excluded are fenced code blocks, inline
+code spans, HTML comments, raw HTML tags, heading markers, list bullets,
+blockquote markers, emphasis runs, table pipes and the table rule row. Code and
+comments raise `markup_code_not_analyzed`; emphasis and bullets are not worth a
+note. The adapter still does not parse Markdown into a tree and re-render it —
+every excluded piece is copied back byte for byte, and the first test of the
+class is that a document with no edits round-trips identically.
+
+Any format added later excludes its own syntax the same way, rather than hoping
+the model ignores it.
+
+**No detection may cross a line break.** An adapter inserts a break between two
+blocks so their words cannot fuse, and the small French model then runs a name
+across it. One replacement over such a span writes the pseudonym into the first
+block and empties the second: a heading disappears. `detection.line_spans()`
+cuts every span at its newlines and narrows each piece. Splitting rather than
+truncating is what keeps both halves — `"l'Université \n Claire Dubois"` holds
+one real name, and dropping either end would lose it.
 
 ## Reported, not rewritten
 
@@ -487,6 +516,15 @@ refusal.
 
 ## Models
 
+**Built: the two small models are frozen into the worker.** They cost about
+30 MB, which this project can ship, and freezing them removes a first-run
+network step, a download UI, a corrupt-download path and a "model missing"
+state from the product. Anonymization therefore works the moment the app is
+installed, like conversion. See _Detector choice_ for how PyInstaller is made
+to find them.
+
+The rules below bind only if a later, larger model is downloaded instead:
+
 - Downloaded once after installation, into the application data directory, with
   the download size shown before it starts.
 - Loaded by absolute path with the library's offline flag set, so a missing
@@ -496,9 +534,6 @@ refusal.
   Python packages are fixed at build time. Fetching executable code at runtime
   into a process whose library validation we had to disable is a posture this
   app will not take.
-- Conversion works before the model exists. Anonymization is presented as
-  needing a one-time download, with its size and a clear state when it has not
-  happened.
 - A corrupt or partial download is detected and re-fetchable, not an obscure
   failure at first inference.
 
@@ -534,12 +569,28 @@ threshold would make a model upgrade a red build, and the number it would guard
 is the model's property, not ours. Baseline recall figures on French fixtures
 are still to be measured, so a later switch has something to beat.
 
-The model the **app** ships is a separate decision, still open, and it is
-downloaded on the user's machine rather than frozen into the worker — which is
-why the models sit in a dependency group and not in `dependencies`. If that
-ships a larger model than the suite tests, then the suite tests the plumbing and
-the recorded figures describe the shipped model; keeping those two roles apart
-is what makes the arrangement honest.
+**The two small models are frozen into the worker.** PyInstaller does not
+follow `spacy.load("fr_core_news_sm")`, and presidio builds its recognizer
+registry by walking modules, so neither is found by import analysis. A worker
+frozen without them starts, answers `list_anonymization_formats`, and dies on
+the first `analyze` with no message at all, because output isolation has
+already taken its stderr away. `python/packaging/worker.spec` therefore
+`collect_all`s spaCy, presidio and both model packages by name, and
+`python/tests/test_packaging_spec.py` asserts that list against
+`detection._MODELS` rather than against a second copy of it. The cost is about
+30 MB of binary. Shipping a larger model than the suite tests stays possible —
+the suite would then test the plumbing while the recorded figures describe the
+shipped model — but it is no longer a post-install download.
+
+**Precision measured, and left as it is.** On the French meeting-report fixture
+the detector reports about fifty spans, of which a handful are ordinary words:
+a section heading, the word after a colon. A POS filter was prototyped —
+`AnalyzerEngine.analyze` takes pre-computed `nlp_artifacts`, so reading
+`.pos_` off the tokens costs no extra model time — and dropping single-token
+non-`PROPN` spans removed 10 false positives and also `Nantes`, a real location
+the model tagged `NOUN`. For a privacy tool a miss is worse than a noise row
+and the review screen starts empty, so the filter is rejected. The README says
+plainly what to expect instead.
 
 ## Verification strategy
 
@@ -635,9 +686,10 @@ real at a fraction of the cost and every later step inherits it.
 - Whether clearing document properties is on by default. It is the safer
   default and the more surprising one.
 - The exact mask length per entity type.
-- Where the model download is triggered — first use of the workflow, or a
-  settings screen. Same question the optional OCR model has; it should get the
-  same answer.
+- ~~Where the model download is triggered~~ — **moot for now**: the two small
+  models are frozen into the worker, so there is no download to trigger. The
+  question returns only if the app ships a larger model, and it should then get
+  the same answer as the optional OCR model.
 - Which local OCR engine tier C uses, inherited from the conversion workflow's
   OCR decision.
 - ~~What the app tells a user who selects a PDF~~ — **decided**: convert it

@@ -49,11 +49,6 @@ class TestPlainText:
 
         assert unit_texts(extraction) == ["Jean Dupont habite à Caen."]
 
-    def test_markdown_is_handled_as_text_without_parsing_it(self, tmp_path):
-        path = write(tmp_path, "note.md", "# Titre\n\nContact : jean@example.fr\n")
-
-        assert unit_texts(extract(path)) == ["# Titre\n\nContact : jean@example.fr\n"]
-
     def test_a_copy_with_no_edits_is_byte_identical(self, tmp_path):
         content = "Jean\r\nMarie\r\n"
         path = write(tmp_path, "note.txt", content)
@@ -86,6 +81,110 @@ class TestPlainText:
 
         with pytest.raises(AdapterError):
             extract(path)
+
+
+class TestMarkdown:
+    """Markdown syntax is structure, so the detector never sees it.
+
+    Handing ``**Lieu :** Nantes, salle Loire`` to a model as-is was the earlier
+    behaviour, and it cost twice: an email inside a fenced code block was
+    offered for replacement although the documentation says code is not
+    analyzed, and the syntax characters wrecked the sentences around them —
+    ``salle`` came back as a person, ``Annexe`` as a location, and a table cell
+    came back with its closing pipe inside the span.
+    """
+
+    def test_a_copy_with_no_edits_is_byte_identical(self, tmp_path):
+        content = "# Titre\n\n| Nom   | Date |\n| ----- | ---- |\n| Jean  | 2026 |\n"
+        path = write(tmp_path, "note.md", content)
+
+        assert run(path, [], tmp_path) == content.encode("utf-8")
+
+    def test_heading_and_emphasis_markers_are_not_analyzed(self, tmp_path):
+        path = write(tmp_path, "note.md", "## Annexe\n\n**Lieu :** Nantes\n")
+
+        [unit] = extract(path).units
+
+        assert "#" not in unit.text
+        assert "*" not in unit.text
+        assert "Annexe" in unit.text
+        assert "Lieu :" in unit.text
+        assert "Nantes" in unit.text
+
+    def test_a_fenced_code_block_is_not_analyzed_and_is_noted(self, tmp_path):
+        path = write(
+            tmp_path,
+            "note.md",
+            "Script :\n\n```python\nOWNER = \"admin@novagaia.fr\"\n```\n\nFin.\n",
+        )
+
+        extraction = extract(path)
+        [unit] = extraction.units
+
+        assert "admin@novagaia.fr" not in unit.text
+        assert "markup_code_not_analyzed" in extraction.notes
+
+    def test_an_inline_code_span_is_not_analyzed(self, tmp_path):
+        path = write(tmp_path, "note.md", "Écrire à `admin@novagaia.fr` demain.\n")
+
+        [unit] = extract(path).units
+
+        assert "admin@novagaia.fr" not in unit.text
+        assert "demain" in unit.text
+
+    def test_an_html_comment_is_not_analyzed_and_is_noted(self, tmp_path):
+        path = write(tmp_path, "note.md", "Fin.\n\n<!-- relire avec Marie Vidal -->\n")
+
+        extraction = extract(path)
+        [unit] = extraction.units
+
+        assert "Marie Vidal" not in unit.text
+        assert "markup_code_not_analyzed" in extraction.notes
+
+    # A table cell is a value, and the pipe beside it is not part of it. Feeding
+    # the row as one string put the pipe inside the span, so replacing the name
+    # deleted the cell boundary and broke the table.
+    def test_table_cells_are_analyzed_without_their_pipes(self, tmp_path):
+        path = write(
+            tmp_path,
+            "note.md",
+            "| Porteur       | Échéance |\n| ------------- | -------- |\n"
+            "| Claire Dubois | 2026     |\n",
+        )
+
+        [unit] = extract(path).units
+
+        assert "|" not in unit.text
+        assert "-------" not in unit.text
+        assert "Claire Dubois" in unit.text
+
+    def test_an_edit_lands_in_the_file_past_an_excluded_block(self, tmp_path):
+        path = write(
+            tmp_path,
+            "note.md",
+            "```\nadmin@novagaia.fr\n```\n\nContact : Jean Dupont\n",
+        )
+        [unit] = extract(path).units
+        start = unit.text.index("Jean Dupont")
+
+        result = run(
+            path,
+            [Edit(unit.id, start, start + len("Jean Dupont"), "[PERSONNE 1]")],
+            tmp_path,
+        )
+
+        assert result.decode("utf-8") == (
+            "```\nadmin@novagaia.fr\n```\n\nContact : [PERSONNE 1]\n"
+        )
+
+    def test_windows_line_endings_survive_an_edit(self, tmp_path):
+        path = write(tmp_path, "note.md", "# Titre\r\n\r\nJean\r\n")
+        [unit] = extract(path).units
+        start = unit.text.index("Jean")
+
+        result = run(path, [Edit(unit.id, start, start + 4, "[PERSONNE 1]")], tmp_path)
+
+        assert result == b"# Titre\r\n\r\n[PERSONNE 1]\r\n"
 
 
 class TestDelimitedText:

@@ -12,6 +12,7 @@ what it found: the encoding, the delimiter, the line terminator.
 import csv
 import io
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -83,6 +84,8 @@ def adapter_for(extension: str) -> DocumentAdapter:
     """Return the adapter handling ``extension`` (dotted and lowercase)."""
     if extension in (".csv", ".tsv"):
         return _DelimitedAdapter("\t" if extension == ".tsv" else ",")
+    if extension in (".md", ".markdown"):
+        return _MarkdownAdapter()
     if extension in (".json", ".jsonl"):
         return _JsonAdapter(lines=extension == ".jsonl")
     if extension in (".xml",):
@@ -120,11 +123,7 @@ def _line_terminator(text: str) -> str:
 
 
 class _PlainTextAdapter(DocumentAdapter):
-    """Text and Markdown: the whole file is one string, analyzed as it is.
-
-    Markdown is not parsed. Its syntax characters are part of the text a
-    detector sees, which costs nothing, and not parsing means not re-rendering.
-    """
+    """Plain text: the whole file is one string, analyzed as it is."""
 
     UNIT_ID = "content"
 
@@ -146,6 +145,170 @@ class _PlainTextAdapter(DocumentAdapter):
     ) -> None:
         text = replacements.get(self.UNIT_ID, document.units[0].text_map.text)
         output_path.write_bytes(text.encode(document.encoding))
+
+
+# A fenced code block, or an HTML comment. Both can span lines, so both are
+# found over the whole document before anything is read line by line.
+_MARKDOWN_CODE = re.compile(
+    r"^[ \t]{0,3}(`{3,}|~{3,})[^\n]*(?:\n|$)"
+    r"(?:(?!^[ \t]{0,3}\1)[^\n]*(?:\n|$))*"
+    r"(?:^[ \t]{0,3}\1[^\n]*(?:\n|$))?"
+    r"|<!--.*?-->",
+    re.DOTALL | re.MULTILINE,
+)
+
+# What introduces a line rather than belonging to it: blockquote markers, then
+# an ATX heading marker or a list bullet.
+_MARKDOWN_PREFIX = re.compile(
+    r"^[ \t]*(?:>[ \t]*)*(?:#{1,6}[ \t]+|(?:[-*+]|\d{1,9}[.)])[ \t]+)?"
+)
+
+# A table's second row: dashes, colons and pipes only.
+_MARKDOWN_TABLE_RULE = re.compile(r"^[ \t]*\|?[ \t:|-]*-[ \t:|-]*$")
+
+# Syntax inside a line. Underscores are left alone on purpose: `admin_user` is
+# one word to a reader and cutting it would change the text the detector sees
+# for no gain, whereas asterisk emphasis is unambiguous.
+_MARKDOWN_INLINE = re.compile(r"`+[^`\n]*`+|</?[A-Za-z][^>\n]*>|\*{1,3}|~~")
+
+# Code and comments are reported; emphasis and bullets are not worth a note.
+_CODE_NOTE = "markup_code_not_analyzed"
+
+
+@dataclass(frozen=True)
+class _MarkdownPiece:
+    """One stretch of a Markdown file, and what may be done with it."""
+
+    text: str
+    # Whether the detector sees it and a replacement may be written into it.
+    analyzed: bool
+    # Whether the detector needs a line break here, for excluded pieces that
+    # separate blocks. False for inline syntax, where the prose either side is
+    # one sentence.
+    boundary: bool = False
+    note: str | None = None
+    # The TextMap key, assigned only to analyzed pieces.
+    key: int | None = None
+
+
+class _MarkdownAdapter(DocumentAdapter):
+    """Markdown: the prose, with the syntax left out of what is analyzed.
+
+    Not parsed into a tree and not re-rendered — the file is split into the
+    stretches that carry content and the stretches that carry structure, and
+    only the first kind reaches the detector or can be written to. That is what
+    makes the promise in the README true: a fenced code block or an HTML
+    comment is read and copied, never analyzed.
+
+    Handing the raw file to a model instead, as this adapter first did, costs
+    twice. An email inside a code block is offered for replacement although the
+    documentation says code is not analyzed; and the syntax wrecks the
+    sentences around it, so `**Lieu :** Nantes, salle Loire` yields `salle` as
+    a person and a table cell comes back with its closing pipe in the span.
+    """
+
+    UNIT_ID = "content"
+
+    def _load(self, path: Path) -> _Document:
+        text, encoding = _decode(path)
+
+        pieces: list[_MarkdownPiece] = []
+        mapped: list[tuple[Any, str]] = []
+        notes: list[str] = []
+        for piece in _markdown_pieces(text):
+            if piece.note:
+                notes.append(piece.note)
+            if piece.analyzed:
+                piece = _MarkdownPiece(
+                    piece.text, True, piece.boundary, piece.note, key=len(pieces)
+                )
+                mapped.append((piece.key, piece.text))
+            elif piece.boundary and mapped and mapped[-1][0] is not None:
+                # One break between two analyzed stretches, so the last word of
+                # a block cannot fuse with the first word of the next.
+                mapped.append((None, "\n"))
+            pieces.append(piece)
+
+        return _Document(
+            units=[
+                MappedUnit(self.UNIT_ID, TextMap.build(mapped), "document"),
+            ],
+            notes=tuple(dict.fromkeys(notes)),
+            encoding=encoding,
+            payload=pieces,
+        )
+
+    def _write(
+        self, document: _Document, replacements: dict[Any, str], output_path: Path
+    ) -> None:
+        rebuilt = "".join(
+            piece.text if piece.key is None else replacements.get(piece.key, piece.text)
+            for piece in document.payload
+        )
+        output_path.write_bytes(rebuilt.encode(document.encoding))
+
+
+def _markdown_pieces(text: str):
+    """Yield the file's pieces in order, content and structure alike."""
+    for chunk, excluded in _split_on(text, _MARKDOWN_CODE):
+        if excluded:
+            yield _MarkdownPiece(chunk, False, boundary=True, note=_CODE_NOTE)
+        else:
+            yield from _markdown_lines(chunk)
+
+
+def _markdown_lines(chunk: str):
+    for line in chunk.splitlines(keepends=True):
+        body = line.rstrip("\r\n")
+        terminator = line[len(body) :]
+
+        prefix = _MARKDOWN_PREFIX.match(body).group(0)
+        if prefix:
+            yield _MarkdownPiece(prefix, False, boundary=True)
+        rest = body[len(prefix) :]
+
+        if _MARKDOWN_TABLE_RULE.match(rest):
+            yield _MarkdownPiece(rest, False, boundary=True)
+        elif "|" in rest:
+            yield from _markdown_cells(rest)
+        else:
+            yield from _markdown_inline(rest)
+
+        if terminator:
+            yield _MarkdownPiece(terminator, False, boundary=True)
+
+
+def _markdown_cells(row: str):
+    """A pipe is the boundary between two values, never part of one."""
+    for cell in re.split(r"(\|)", row):
+        if cell == "|":
+            yield _MarkdownPiece(cell, False, boundary=True)
+        else:
+            yield from _markdown_inline(cell)
+
+
+def _markdown_inline(segment: str):
+    for chunk, excluded in _split_on(segment, _MARKDOWN_INLINE):
+        if not chunk:
+            continue
+        if not excluded:
+            yield _MarkdownPiece(chunk, True)
+        elif chunk.startswith("`"):
+            yield _MarkdownPiece(chunk, False, note=_CODE_NOTE)
+        else:
+            yield _MarkdownPiece(chunk, False)
+
+
+def _split_on(text: str, pattern: re.Pattern):
+    """Yield (chunk, matched) covering ``text`` exactly once, in order."""
+    position = 0
+    for match in pattern.finditer(text):
+        if match.start() > position:
+            yield text[position : match.start()], False
+        yield match.group(0), True
+        position = match.end()
+    if position < len(text):
+        yield text[position:], False
 
 
 class _DelimitedAdapter(DocumentAdapter):

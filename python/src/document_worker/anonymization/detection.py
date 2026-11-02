@@ -189,20 +189,57 @@ def _analyze(unit: TextUnit, language: str) -> list[Detection]:
     for result in results:
         if result.entity_type not in ENTITY_TYPES:
             continue
-        start, end = _trim(unit.text, result.start, result.end)
-        if start == end:
-            continue
-        found.append(
-            Detection(
-                unit.id,
-                start,
-                end,
-                result.entity_type,
-                result.score,
-                unit.text[start:end],
+        for start, end in line_spans(unit.text, result.start, result.end):
+            found.append(
+                Detection(
+                    unit.id,
+                    start,
+                    end,
+                    result.entity_type,
+                    result.score,
+                    unit.text[start:end],
+                )
             )
-        )
     return found
+
+
+def line_spans(text: str, start: int, end: int) -> list[tuple[int, int]]:
+    """
+    Cut a span at every line break in it, and narrow each piece to its value.
+
+    No value we look for contains a newline, and the newlines in a unit's text
+    are mostly not the document's: an adapter puts one between a heading and
+    the paragraph under it, or between two table cells, so that the last word
+    of one block cannot fuse with the first of the next. The small French model
+    still runs a name across that break, and writing one replacement over the
+    whole span empties the second block — the heading disappears.
+
+    Splitting rather than truncating is what keeps both halves: a span reading
+    "l'Université \\n Claire Dubois" holds one real name, and dropping either
+    end would lose it.
+
+    Arguments:
+        text: The unit's text, which the offsets index into.
+        start: Where the recognizer said the value starts.
+        end: Where it said it ends, exclusive.
+
+    Returns:
+        The spans to report, in order. Empty if nothing is left of any of them.
+    """
+    spans = []
+    for line_start, line in _lines_between(text, start, end):
+        narrowed = _trim(text, line_start, line_start + len(line))
+        if narrowed[0] != narrowed[1]:
+            spans.append(narrowed)
+    return spans
+
+
+def _lines_between(text: str, start: int, end: int):
+    """Yield (offset in ``text``, line) for each line the span touches."""
+    offset = start
+    for line in text[start:end].split("\n"):
+        yield offset, line
+        offset += len(line) + 1
 
 
 def _trim(text: str, start: int, end: int) -> tuple[int, int]:

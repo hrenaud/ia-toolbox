@@ -84,12 +84,23 @@ reported as changed rather than rewritten at the wrong offsets.
 
 Some content is read, or reported, but deliberately left as it is. The app says so per document:
 
-- Code and markup, in Markdown, HTML, XML and JSON — only the text a reader sees is analyzed.
+- Code and markup, in Markdown, HTML, XML and JSON — only the text a reader sees is analyzed. In
+  Markdown that means fenced code blocks, inline code spans, HTML comments and raw HTML tags are
+  copied without being read, and the syntax itself — heading markers, emphasis, list bullets, table
+  pipes — is never part of what is analyzed or replaced.
 - Values stored inside XML tag attributes.
 - Tracked changes in Word: deleted and inserted text stays, so accepting the revisions later can
   bring personal information back.
 - Document properties, such as the author name.
 - Text shared between cells in Excel: replacing it changes every cell that uses it.
+
+### What to expect from the detector
+
+The review screen exists because the detector is not exact. It errs towards reporting too much: on
+a French meeting report, expect a handful of ordinary words picked up as names — a section heading,
+the word after a colon — alongside everything that really is personal information. Unchecking a row
+costs a click; a value that is never reported is a value that stays in the copy, so the balance is
+deliberately set that way. Read the list before confirming.
 
 ### Naming of the copy
 

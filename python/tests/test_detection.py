@@ -133,6 +133,40 @@ class TestOverlapResolution:
         assert detection.resolve_overlaps([]) == []
 
 
+class TestSpansNeverCrossALineBreak:
+    """No value contains a newline, so no detection may either.
+
+    An adapter separates the blocks it extracts with a line break the document
+    does not own — a heading from the paragraph under it, one table cell from
+    the next. The small French model happily runs a name across that break and
+    returns "Claire Dubois\\nParticipants", and replacing that span writes the
+    pseudonym into the first block and empties the second: the heading is gone.
+    Splitting at the break keeps both halves instead of truncating to one.
+    """
+
+    def test_a_span_over_two_lines_becomes_one_span_per_line(self):
+        text = "Claire Dubois\nParticipants"
+
+        assert detection.line_spans(text, 0, len(text)) == [(0, 13), (14, 26)]
+
+    def test_a_span_within_one_line_is_left_alone(self):
+        assert detection.line_spans("Claire Dubois", 0, 13) == [(0, 13)]
+
+    def test_a_line_holding_nothing_but_punctuation_is_dropped(self):
+        text = "Claire\n . \nMarie"
+
+        assert detection.line_spans(text, 0, len(text)) == [(0, 6), (11, 16)]
+
+    def test_each_line_keeps_the_offsets_of_the_whole_text(self):
+        text = "Titre\nl'Université \n Claire Dubois"
+        spans = detection.line_spans(text, 6, len(text))
+
+        assert [text[start:end] for start, end in spans] == [
+            "l'Université",
+            "Claire Dubois",
+        ]
+
+
 class TestFrench:
     def test_a_person_and_a_place(self):
         text = "Le dossier de Marie Lefebvre a été transmis à la mairie de Bordeaux."
