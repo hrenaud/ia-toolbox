@@ -1,6 +1,8 @@
 # IA Toolbox
 
-A locally-running desktop application for converting supported documents to Markdown. All document processing happens locally without sending content to remote services.
+A locally-running desktop application for converting supported documents to Markdown and for
+anonymizing the personal information they contain. All document processing happens locally without
+sending content to remote services.
 
 ## Supported Formats
 
@@ -32,6 +34,68 @@ A document that is merely locked against editing — Excel's "protect workbook s
 exception: a protected one is reported only as unreadable.
 
 In every case the original file is left untouched and the rest of the batch continues.
+
+## Anonymization
+
+The anonymizer finds personal information in a document and writes an anonymized **copy** in the
+same format. The original file is never modified.
+
+### Formats that can be anonymized
+
+Rewriting a document in place is a different capability from converting it to Markdown, so this
+catalog is shorter:
+
+- `.txt`, `.text` — Text
+- `.md`, `.markdown` — Markdown
+- `.csv`, `.tsv` — CSV, TSV
+- `.json`, `.jsonl` — JSON, JSON Lines
+- `.xml` — XML
+- `.html`, `.htm` — HTML
+- `.docx` — Word Document
+- `.xlsx` — Excel Spreadsheet
+- `.pptx` — PowerPoint
+
+**OpenDocument formats, including `.odt` (ODT), are not supported.**
+
+**A PDF cannot be anonymized.** Rewriting its text means rebuilding the file, which loses the
+layout. Convert the PDF to Markdown first, then anonymize the Markdown file.
+
+Scanned pages and images are not read: text inside an image needs OCR, which this version does not
+include.
+
+### How the review works
+
+1. **Select the documents and an output folder.** Files in an unsupported format are listed and
+   skipped, never silently dropped.
+2. **Find personal information.** Each document is read and what was found is listed by type —
+   person names, organizations, places, email addresses, phone numbers, IBANs, payment card
+   numbers, French social security numbers, dates. Each item shows how confident the detector is,
+   in words, and where in the document it is.
+3. **Choose what to replace.** Nothing is selected at the start, and nothing is written until you
+   confirm. Each type can be selected as a whole. Text the format cannot rewrite without breaking
+   the document is shown for information and offers no choice.
+4. **Confirm.** Choose between a label (`[PERSON 1]`) or masking characters (`●●●●●`), then create
+   the copy. Each document succeeds or fails on its own: one failure does not stop the others.
+
+The document is read a second time when the copy is written. A document edited during the review is
+reported as changed rather than rewritten at the wrong offsets.
+
+### What is not rewritten
+
+Some content is read, or reported, but deliberately left as it is. The app says so per document:
+
+- Code and markup, in Markdown, HTML, XML and JSON — only the text a reader sees is analyzed.
+- Values stored inside XML tag attributes.
+- Tracked changes in Word: deleted and inserted text stays, so accepting the revisions later can
+  bring personal information back.
+- Document properties, such as the author name.
+- Text shared between cells in Excel: replacing it changes every cell that uses it.
+
+### Naming of the copy
+
+The copy is `originalname-anonymized` in English, `originalname-anonymise` in French, keeping the
+original extension. An existing file is never overwritten: a numbered suffix (`-2`, `-3`) is added
+instead.
 
 ## Prerequisites
 

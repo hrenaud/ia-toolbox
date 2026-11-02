@@ -82,7 +82,7 @@ def convert_file(input_path: Path, output_directory: Path) -> ConversionResult:
 
     # A protected package fails every reader generically, so it is recognised
     # from its own bytes before conversion is attempted.
-    if _is_protected_package(input_path):
+    if is_protected_package(input_path):
         return ConversionResult(
             status="error",
             error_code="password_protected",
@@ -165,7 +165,7 @@ def convert_file(input_path: Path, output_directory: Path) -> ConversionResult:
     )
 
 
-def _is_protected_package(input_path: Path) -> bool:
+def is_protected_package(input_path: Path) -> bool:
     """
     Report whether a DOCX/XLSX/PPTX is a password-protected package.
 

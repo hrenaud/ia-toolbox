@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { AnonymizationPage } from "../features/anonymization/AnonymizationPage";
 import { ConversionPage } from "../features/conversion/ConversionPage";
 import { dictionaries, getInitialLocale, type Locale } from "./i18n";
 import { loadSettings, saveSettings, type Settings } from "./settings";
@@ -89,9 +90,7 @@ export function AppShell() {
           {workflow === "convert" ? (
             <ConversionPage locale={locale} />
           ) : (
-            <div className="status-card" role="status">
-              <p>{t.unavailable}</p>
-            </div>
+            <AnonymizationPage locale={locale} />
           )}
           <p className="privacy">{t.privacy}</p>
         </main>

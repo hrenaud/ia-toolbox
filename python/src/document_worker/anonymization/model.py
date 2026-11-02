@@ -1,0 +1,86 @@
+"""
+The values the anonymization pipeline passes between its stages.
+
+The pipeline is one path for every format: extract text units, detect personal
+data in them, let the user drop detections, turn the rest into edits, write a
+copy. Each format contributes only an adapter that produces units and applies
+edits. These types are the whole contract between the two.
+"""
+
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class TextUnit:
+    """
+    One independently analyzed string, with its own offset space.
+
+    A unit is a CSV column, a DOCX part, a PPTX slide, an XLSX sheet. Text is
+    never concatenated across units, because an offset spanning two of them
+    cannot be mapped back to a place in the document.
+
+    Attributes:
+        id: Opaque to the pipeline; the adapter's own handle for this unit.
+        text: The string a detector analyzes.
+        location: Where this text is, in words the user recognises, such as
+            "page header" or "slide 4 notes".
+        context: Extra words given to the detector as context without being
+            part of the text — a CSV header name, a JSON key. A column called
+            "courriel" lifts recall far above what its values alone give.
+        rewritable: False for text that is read and reported but never written
+            back, such as a string literal inside a spreadsheet formula.
+    """
+
+    id: str
+    text: str
+    location: str
+    context: tuple[str, ...] = ()
+    rewritable: bool = True
+
+
+@dataclass(frozen=True)
+class Detection:
+    """One span of personal data found in one unit."""
+
+    unit_id: str
+    start: int
+    end: int
+    entity_type: str
+    score: float
+    text: str
+
+
+@dataclass(frozen=True)
+class Edit:
+    """One replacement to write back, in a unit's offset space."""
+
+    unit_id: str
+    start: int
+    end: int
+    replacement: str
+
+
+@dataclass(frozen=True)
+class Extraction:
+    """
+    What an adapter read from a document.
+
+    Attributes:
+        units: The strings to analyze.
+        notes: Codes for content that is not analyzed or not rewritten, such as
+            embedded images or tracked changes. The UI translates them. This
+            report is a feature, not a footnote: it is what stops a user
+            believing a copy is clean when it is only partly clean.
+    """
+
+    units: list[TextUnit] = field(default_factory=list)
+    notes: tuple[str, ...] = ()
+
+
+class AdapterError(Exception):
+    """A document the adapter cannot read, with a code the worker can report."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message

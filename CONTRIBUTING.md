@@ -102,6 +102,24 @@ the dependency closure can produce an encrypted Office document, so the only way
 what Office writes is to commit three such files. Do not grow this directory for a case a writer
 could cover.
 
+### Models are part of the environment, not of the test
+
+The anonymization detection suite needs a spaCy model, and a model-dependent test that skips when
+none is installed is worse than no test: it turns a never-executed code path into a green build.
+So `fr_core_news_sm` and `en_core_web_sm` are pinned by URL in the `dev` dependency group and
+hash-locked in `uv.lock`. `uv sync --locked` and a plain `uv run pytest` both install them, and
+`python/tests/test_detection_models.py` **fails** rather than skips if one is missing or broken.
+
+Do not replace this with `python -m spacy download`: that is an unpinned network fetch at test time,
+and it would make two CI runs of the same commit test two different models.
+
+The small models are the ones the suite asserts against, and only for plumbing — entity types,
+offsets, overlap resolution. Recall is measured and recorded, never asserted: a recall threshold in
+a test makes a model upgrade a red build. The model the app actually ships is a separate decision,
+documented in the anonymization spec, and it is downloaded on the user's machine rather than frozen
+into the worker binary — which is why these models are in a dependency group and not in
+`dependencies`.
+
 ### The gate
 
 Everything below must pass before you open a pull request. CI runs the same set on macOS and
@@ -213,6 +231,79 @@ Two boundaries matter here:
   the compound-file wrapper.
 - **`.xls` is excluded on purpose.** Excel 97-2003 is legitimately a compound file, so the magic
   proves nothing there and a protected legacy workbook still reports `processing_failed`.
+
+### The anonymization adapter layer
+
+`python/src/document_worker/anonymization/` is a second, independent format surface, reachable over
+the protocol through `list_anonymization_formats`, `analyze` and `anonymize`. The adapters are
+complete for two tiers, and three boundaries in them are easy to break by accident.
+
+- **Its catalog is not the conversion catalog.** `anonymization/formats.py` lists only formats we can
+  actually rewrite, and `anonymization_adapter()` returns `None` for everything else, `.pdf`
+  included. Do not derive one catalog from the other to save a list: a format announced here and not
+  implemented means a user hands over a file believing it was handled.
+- **Offsets live inside one unit.** A unit is a CSV column, a JSON document, a DOCX part, a slide.
+  Text is never concatenated across units, because an offset crossing a unit boundary cannot be
+  mapped back to the fragment that stores it. `textmap.py` owns that mapping and knows nothing about
+  XML; adapters own the XML and know nothing about offsets.
+- **Some text is read, reported, and never written.** XLSX formula literals and sheet names
+  (`rewritable=False`), tracked changes, and document properties. `DocumentAdapter.apply()` raises
+  rather than writing an edit that targets them. Making one of these writable is a spec decision,
+  not a bug fix — renaming a sheet turns every reference to it into `#REF!`.
+
+Adapters emit **codes**, never sentences: notes (`markup_code_not_analyzed`,
+`tracked_changes_not_rewritten`, `document_properties_not_rewritten`, `xlsx_shared_strings_reused`,
+`xml_attributes_not_analyzed`) and errors (`unreadable_text`, `malformed_json`, `malformed_markup`,
+`unsupported_package`). `pipeline.py` adds its own errors on top (`input_not_found`,
+`unsupported_format`, `password_protected`, `invalid_output_directory`, `document_changed`,
+`not_rewritable`, `invalid_request`, `write_failed`). The French and English strings belong in
+`src/app/locales/`, under the same rule as the conversion error codes above.
+
+### Anonymization is two round trips, and the worker remembers nothing between them
+
+`analyze` reads a document and reports it; the user decides; `anonymize` takes back the subset they
+kept and reads the document **a second time**. That second read is not waste — it is what catches a
+document edited or replaced while the review screen was open, and it is why a kept detection carries
+no text and no score. A request that could assert what a span contains could assert something the
+document does not say, so `KeptDetection` carries offsets only and the text comes from the file.
+Offsets that no longer fit yield `document_changed`, nothing is written, and a partial file is
+removed.
+
+The pipeline import must stay inside `process_request`. Loading the spaCy models writes to the real
+stdout and stderr, so it has to happen after `silence_process_output()` has replaced those
+descriptors — a module-level import puts model chatter on the protocol pipe.
+
+Which formats are covered, which are refused, and why PDF, embedded images, DICOM, OpenDocument and
+the legacy binary formats are not in the build is recorded in
+`.superpowers/specs/2026-10-31-document-anonymization.md`. Tier C (raster images) is blocked on the
+project's OCR decision, not scheduled: `presidio-image-redactor` needs Tesseract, a signed system
+binary per platform.
+
+OOXML fixtures in `python/tests/test_ooxml_adapters.py` are hand-built zips on purpose. A fixture
+written by `python-pptx` would be too well-formed to exercise the case that actually matters — a
+name split across three runs.
+
+### The review screen is the consent step, not a progress screen
+
+`src/features/anonymization/` renders the two round trips, and four of its rules are load-bearing.
+
+- **Nothing is written before the explicit confirmation, and the selection starts empty.** A
+  confirmation reached by a slip must replace nothing. The kept/total count is announced through the
+  page's single `role="status"` region, so the empty start is stated rather than left to be noticed.
+- **A detection the format cannot rewrite is shown and offered no checkbox.** Hiding it would remove
+  the user's only sign that the name is in the file at all. `isSelectable()` in `review.ts` owns that
+  decision, from the unit's `rewritable` flag.
+- **Confidence is a word, never a shade.** `confidenceWord()` maps the score to
+  `anonymization.confidence.*`. The same rule covers every state on the page: colour may group and
+  space, it never carries the only copy of a meaning.
+- **`anonymizedName()` in `review.ts` mirrors `_output_path` in the worker's `pipeline.py`**, so the
+  confirmation names the file the worker will try to write. Its test asserts the `_SUFFIXES` literal
+  out of the Python source; change one side and that test fails. The numbered collision suffix is
+  deliberately not guessed client-side — only the worker sees the output folder, so the result
+  reports the path actually written.
+
+The page uses the **shared** sidecar client (`src/app/worker/sharedClient.ts`), the same one
+conversion uses. A second process would load the detection models a second time.
 
 ### Never overwrite user files
 

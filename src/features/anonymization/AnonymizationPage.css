@@ -1,0 +1,192 @@
+/**
+ * Only what this page adds.
+ *
+ * The file-picking chrome — `.format-section`, `.file-item`, `.output-section`,
+ * `.error-message`, `.primary`, `.secondary-button` — is the same markup as the
+ * conversion page and keeps its styles, which the shell loads with both pages.
+ * Nothing here carries meaning by colour alone: every state the user has to act
+ * on is also said in words, so these rules only group and space.
+ */
+
+.anonymization-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.announcement {
+  color: var(--muted);
+  font-size: 0.95rem;
+  min-height: 1.4em;
+}
+
+.review-section,
+.results-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.bulk-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.document-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+}
+
+.document-section h3 {
+  margin-top: 0;
+  font-size: 1rem;
+  word-break: break-all;
+}
+
+.document-clean,
+.document-error,
+.result-error,
+.output-preview {
+  margin: var(--space-2) 0 0;
+  font-size: 0.95rem;
+}
+
+.document-clean,
+.output-preview {
+  color: var(--muted);
+}
+
+.review-group {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin: var(--space-3) 0 0;
+  padding: var(--space-2) var(--space-3) var(--space-3);
+}
+
+.review-group legend {
+  font-weight: 650;
+  padding: 0 var(--space-2);
+}
+
+.review-group-select {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.95rem;
+}
+
+.review-list {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.review-item label {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  cursor: pointer;
+}
+
+.review-item.frozen {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  /* The indent stands in for the checkbox the row deliberately does not have. */
+  padding-left: calc(var(--space-3) + var(--space-2));
+}
+
+.review-text {
+  font-weight: 650;
+  word-break: break-word;
+}
+
+.review-meta,
+.review-help,
+.note-detail {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.review-badge {
+  align-self: flex-start;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  padding: 0.1rem var(--space-2);
+}
+
+.note-detail,
+.review-help {
+  display: block;
+}
+
+.document-notes {
+  margin-top: var(--space-3);
+}
+
+.document-notes h4 {
+  font-size: 0.95rem;
+  margin: 0 0 var(--space-2);
+}
+
+.document-notes ul {
+  margin: 0;
+  padding-left: var(--space-4);
+  color: var(--muted);
+  font-size: 0.95rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.operator-choice {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3) var(--space-3);
+}
+
+.operator-choice legend {
+  font-weight: 650;
+  padding: 0 var(--space-2);
+}
+
+.operator-choice label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+}
+
+.result-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.result-item {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+}
+
+.result-name {
+  font-weight: 650;
+  word-break: break-all;
+}
+
+.result-status {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin-left: var(--space-2);
+}

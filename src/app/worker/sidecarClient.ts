@@ -1,18 +1,68 @@
 import { Command, type Child } from "@tauri-apps/plugin-shell";
 
+/** One detection the user chose to keep, as offsets and nothing else.
+ *
+ * No text and no score: the worker reads the document a second time, and
+ * offsets that no longer fit mean the document changed under the review
+ * screen. Sending the text back would let a stale copy be written as fresh.
+ */
+export interface KeptDetection {
+  unit_id: string;
+  start: number;
+  end: number;
+  entity_type: string;
+}
+
 export type WorkerRequest =
   | { operation: "list_formats" }
-  | { operation: "convert"; input_path: string; output_directory: string };
+  | { operation: "list_anonymization_formats" }
+  | { operation: "convert"; input_path: string; output_directory: string }
+  | { operation: "analyze"; input_path: string }
+  | {
+      operation: "anonymize";
+      input_path: string;
+      output_directory: string;
+      operator: string;
+      language: string;
+      detections: KeptDetection[];
+    };
 
 export interface FormatInfo {
   extension: string;
   label: string;
-  requires_optional_component: boolean;
+  /** Absent for the anonymization catalog, which has no optional components. */
+  requires_optional_component?: boolean;
+}
+
+/** A stretch of the document the adapter can read; `location` is a code. */
+export interface AnalyzedUnit {
+  id: string;
+  location: string;
+  rewritable: boolean;
+}
+
+export interface Detection extends KeptDetection {
+  score: number;
+  text: string;
 }
 
 export type WorkerResult =
   | { id: string; event: "formats"; items: FormatInfo[] }
-  | { id: string; event: "result"; status: "success"; output_path: string }
+  | {
+      id: string;
+      event: "result";
+      status: "success";
+      units: AnalyzedUnit[];
+      detections: Detection[];
+      notes: string[];
+    }
+  | {
+      id: string;
+      event: "result";
+      status: "success";
+      output_path: string;
+      notes?: string[];
+    }
   | {
       id: string;
       event: "result";
@@ -48,6 +98,49 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isCodeList(value: unknown): boolean {
+  return (
+    Array.isArray(value) && value.every((code) => typeof code === "string")
+  );
+}
+
+function isOffset(value: unknown): boolean {
+  return Number.isInteger(value) && (value as number) >= 0;
+}
+
+function isWrittenFile(value: Record<string, unknown>): boolean {
+  return (
+    typeof value.output_path === "string" &&
+    value.output_path.length > 0 &&
+    (value.notes === undefined || isCodeList(value.notes))
+  );
+}
+
+function isAnalysis(value: Record<string, unknown>): boolean {
+  return (
+    Array.isArray(value.units) &&
+    value.units.every(
+      (unit) =>
+        isRecord(unit) &&
+        typeof unit.id === "string" &&
+        typeof unit.location === "string" &&
+        typeof unit.rewritable === "boolean",
+    ) &&
+    Array.isArray(value.detections) &&
+    value.detections.every(
+      (found) =>
+        isRecord(found) &&
+        typeof found.unit_id === "string" &&
+        isOffset(found.start) &&
+        isOffset(found.end) &&
+        typeof found.entity_type === "string" &&
+        typeof found.score === "number" &&
+        typeof found.text === "string",
+    ) &&
+    isCodeList(value.notes)
+  );
+}
+
 function isEvent(value: unknown): value is WorkerEvent {
   if (!isRecord(value) || typeof value.id !== "string") return false;
   if (value.event === "progress") {
@@ -66,18 +159,73 @@ function isEvent(value: unknown): value is WorkerEvent {
           isRecord(item) &&
           typeof item.extension === "string" &&
           typeof item.label === "string" &&
-          typeof item.requires_optional_component === "boolean",
+          (item.requires_optional_component === undefined ||
+            typeof item.requires_optional_component === "boolean"),
       )
     );
   }
   if (value.event === "result") {
-    return value.status === "success"
-      ? typeof value.output_path === "string" && value.output_path.length > 0
-      : value.status === "error" &&
-          typeof value.error_code === "string" &&
-          typeof value.message === "string";
+    if (value.status === "error") {
+      return (
+        typeof value.error_code === "string" &&
+        typeof value.message === "string"
+      );
+    }
+    if (value.status !== "success") return false;
+    return "output_path" in value ? isWrittenFile(value) : isAnalysis(value);
   }
   return false;
+}
+
+/** What each operation is allowed to answer with.
+ *
+ * A reply shaped for another operation is not a cosmetic mismatch: it would
+ * hand a page a result it never asked for, so it is rejected like any other
+ * malformed output.
+ */
+const EXPECTED_REPLY = {
+  list_formats: "formats",
+  list_anonymization_formats: "formats",
+  convert: "file",
+  anonymize: "file",
+  analyze: "analysis",
+} as const;
+
+/** The message each operation sends, field by field.
+ *
+ * Kept detections are rebuilt rather than forwarded, so a review row carrying
+ * its display text cannot send that text back to the worker.
+ */
+function fieldsOf(request: WorkerRequest): Record<string, unknown> {
+  switch (request.operation) {
+    case "list_formats":
+    case "list_anonymization_formats":
+      return { operation: request.operation };
+    case "analyze":
+      return { operation: request.operation, input_path: request.input_path };
+    case "convert":
+      return {
+        operation: request.operation,
+        input_path: request.input_path,
+        output_directory: request.output_directory,
+      };
+    case "anonymize":
+      return {
+        operation: request.operation,
+        input_path: request.input_path,
+        output_directory: request.output_directory,
+        operator: request.operator,
+        language: request.language,
+        detections: request.detections.map(
+          ({ unit_id, start, end, entity_type }) => ({
+            unit_id,
+            start,
+            end,
+            entity_type,
+          }),
+        ),
+      };
+  }
 }
 
 interface Pending {
@@ -133,15 +281,7 @@ export class SidecarClient {
         progress,
       });
       // Select fields explicitly so extra UI properties cannot become protocol commands.
-      const message =
-        request.operation === "list_formats"
-          ? { id, operation: request.operation }
-          : {
-              id,
-              operation: request.operation,
-              input_path: request.input_path,
-              output_directory: request.output_directory,
-            };
+      const message = { id, ...fieldsOf(request) };
       void this.child!.write(JSON.stringify(message) + "\n").catch(() =>
         this.fail("worker_stopped"),
       );
@@ -182,13 +322,15 @@ export class SidecarClient {
       return;
     }
     const pending = this.pending.get(event.id);
+    const expected = pending && EXPECTED_REPLY[pending.operation];
     if (
       !pending ||
-      (event.event === "formats" && pending.operation !== "list_formats") ||
-      (event.event === "progress" && pending.operation !== "convert") ||
+      (event.event === "formats" && expected !== "formats") ||
+      // Only the operations that open a document report progress.
+      (event.event === "progress" && expected === "formats") ||
       (event.event === "result" &&
         event.status === "success" &&
-        pending.operation !== "convert")
+        expected !== ("output_path" in event ? "file" : "analysis"))
     ) {
       this.fail("invalid_response");
       return;
