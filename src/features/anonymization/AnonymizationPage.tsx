@@ -52,9 +52,24 @@ export function AnonymizationPage({ locale }: AnonymizationPageProps) {
   // this page, so switching workflow would kill the process the next page is
   // about to ask for. `AppShell` owns its lifetime.
   useEffect(() => {
+    // Under StrictMode the first mount is discarded while this request is in
+    // flight, and the shell's cleanup stops the shared worker underneath it.
+    // The flag keeps that rejection from alarming a page that no longer exists.
+    let cancelled = false;
+
     loadAnonymizationFormats()
-      .then(setFormats)
-      .catch(() => setError(t["anonymization.formatLoadError"]));
+      .then((loaded) => {
+        if (cancelled) return;
+        setFormats(loaded);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setError(t["anonymization.formatLoadError"]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [t]);
 
   // Native drag and drop, subscribed exactly once for the lifetime of the

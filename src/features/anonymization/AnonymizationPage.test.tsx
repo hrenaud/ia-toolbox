@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -100,6 +101,26 @@ describe("choosing the documents", () => {
     expect(
       await screen.findByText(/Document Word/, { ignore: "option" }),
     ).toBeVisible();
+  });
+
+  // StrictMode discards the first mount in development, and the shell's
+  // cleanup stops the shared worker while this page's first request is still
+  // in flight. That rejection belongs to a page that no longer exists.
+  it("ignores a load rejected after its mount was discarded", async () => {
+    vi.mocked(api.loadAnonymizationFormats)
+      .mockRejectedValueOnce(new Error("worker_stopped"))
+      .mockResolvedValue([{ extension: ".docx", label: "Document Word" }]);
+
+    render(
+      <StrictMode>
+        <AnonymizationPage locale="fr" />
+      </StrictMode>,
+    );
+
+    expect(
+      await screen.findByText(/Document Word/, { ignore: "option" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("marks a file whose format cannot be anonymized", async () => {

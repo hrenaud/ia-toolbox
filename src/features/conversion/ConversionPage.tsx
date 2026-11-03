@@ -39,16 +39,29 @@ export function ConversionPage({ locale }: ConversionPageProps) {
   // would kill the process the next page is about to ask for. `AppShell` owns
   // its lifetime.
   useEffect(() => {
+    // Under StrictMode the first mount is discarded, and the shell's cleanup
+    // stops the shared worker while this request is still in flight. The flag
+    // is what keeps that rejection from reaching a page that no longer exists,
+    // which showed up as a "restart the app" banner at every dev launch, above
+    // the formats the second mount had loaded fine.
+    let cancelled = false;
+
     loadSupportedFormats()
       .then((loaded) => {
+        if (cancelled) return;
         setFormats(loaded);
         setFormatsLoaded(true);
       })
       .catch((err) => {
+        if (cancelled) return;
         console.error("Failed to load formats:", err);
         setError(t["conversion.formatLoadError"]);
         setFormatsLoaded(true);
       });
+
+    return () => {
+      cancelled = true;
+    };
   }, [t]);
 
   // Native drag and drop, in its own effect with no dependencies: it must

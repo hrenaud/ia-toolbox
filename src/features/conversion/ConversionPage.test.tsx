@@ -147,6 +147,31 @@ describe("ConversionPage", () => {
     expect(screen.getAllByText("report.pdf")).toHaveLength(1);
   });
 
+  // StrictMode discards the first mount in development, and `AppShell`'s
+  // cleanup stops the shared worker while this page's first `list_formats` is
+  // still in flight. That rejection belongs to a page that no longer exists,
+  // and it showed up as a red "restart the application" banner at every dev
+  // launch, sitting above the formats the second mount had loaded fine.
+  it("ignores a load rejected after its mount was discarded", async () => {
+    vi.mocked(conversionApi.loadSupportedFormats)
+      .mockRejectedValueOnce(new Error("worker_stopped"))
+      .mockResolvedValue([
+        { extension: ".pdf", label: "PDF", requiresOptionalComponent: false },
+      ]);
+
+    render(
+      <StrictMode>
+        <ConversionPage locale="en" />
+      </StrictMode>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/PDF/)).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("shows status region with aria-live for accessibility", async () => {
     vi.mocked(conversionApi.loadSupportedFormats).mockResolvedValue([
       {
