@@ -391,8 +391,19 @@ corrupting the protocol.
 
 ## Detection
 
-- One analyzer, both languages. A document is analyzed for French and English
-  and the detections merged — mixed-language documents are the norm here.
+- ~~One analyzer, both languages. A document is analyzed for French and English
+  and the detections merged — mixed-language documents are the norm here.~~
+  **Revised during implementation: one document, one language.** Running both
+  models over the same text is what returned `Claire Dubois` as a person and as
+  an organization at once, each with the same score, and a French model reading
+  English prose tags ordinary words as names. The language is guessed from the
+  text by counting the function words each model knows, reported in the result
+  and overridable in the `analyze` request — the user is the one who can see
+  the guess was wrong. Only that language's model proposes names; the patterns
+  (email, IBAN, card, phone, NIR, date) are language-independent and still run
+  regardless. A genuinely bilingual document is read in one language and the
+  other language's names are missed: a deliberate trade for a list the user can
+  actually read.
 - Entity types: person, organization, location, email address, phone number,
   IBAN, credit card, French social security number (NIR), and date of birth.
   The NIR needs its check-key validation; a bare 15-digit pattern puts too many
@@ -469,12 +480,14 @@ For tier C, the only operator is a painted box.
 
 It stands between detection and writing, so it must be usable without a mouse.
 
-- Detections grouped by entity type, each row showing the detected text, its
-  type, its confidence, and its location in terms the user recognises — "page
-  header", "slide 4 notes", "sheet Ventes, cell B12", "column courriel" — with
-  a checkbox.
-- Bulk selection per type and per unit, so a user can drop all organizations,
-  or everything on one slide, in one action.
+- ~~Detections grouped by entity type~~, each row showing the detected text,
+  its type, its confidence, and its location in terms the user recognises —
+  "page header", "slide 4 notes", "sheet Ventes, cell B12", "column courriel" —
+  with a checkbox. **Revised during implementation: one flat list, one row per
+  value.** See below.
+- ~~Bulk selection per type and per unit, so a user can drop all organizations,
+  or everything on one slide, in one action.~~ **Dropped with the grouping**:
+  "select everything" and "select nothing" remain.
 - Where one replacement affects several places — an XLSX shared string — the
   row says how many.
 - Keyboard-operable with visible focus; the count of kept detections announced
@@ -485,18 +498,38 @@ It stands between detection and writing, so it must be usable without a mouse.
 
 ### What was built, and where it departs from the above
 
-Implemented as `ReviewList.tsx` and `AnonymizationPage.tsx`. Three deliberate
+Implemented as `ReviewList.tsx` and `AnonymizationPage.tsx`. The deliberate
 deviations:
 
 - **The selection starts empty, not all-kept.** A confirmation reached by a slip
   then replaces nothing instead of rewriting a whole document, and the announced
   "kept of total" count makes the empty start visible. "Select everything" is
   one action away.
-- **Bulk selection is per entity type only, not per unit.** A unit is an
+- **One row per value, and the type is a menu, not a label.** The grouped
+  design was built first and tried on a ten-line meeting report: fifty rows,
+  the same name asked about eight times, and one name asked about twice under
+  two headings because the two models typed it differently — both claiming high
+  confidence. So the row is the value, case-folded, type excluded from the key:
+  one value is one question. The type the worker proposed is shown in a
+  `<select>` the user can change, and the answer is applied to every occurrence
+  of that value when the payload is built, because the type decides the label
+  the copy carries. The row shows the first occurrence with a few words of the
+  document either side — "Loire" alone is a question nobody can answer.
+- **Bulk selection is per entity type only, not per unit.** ~~A unit is an
   internal part id; grouping the screen by both type and unit would mean two
-  competing hierarchies over the same rows. Per-type is the choice a user can
-  actually state ("every email address"); per-unit was dropped rather than
-  guessed at.
+  competing hierarchies over the same rows.~~ **Superseded**: with the grouping
+  gone, the only bulk actions are "select everything" and "select nothing".
+- **The confidence word is shown only where it varies.** Every type the model
+  guesses at — person, organization, location, date — scores exactly 0.85, so
+  "high confidence" was printed on precisely the rows the user has to check one
+  by one. A word that never changes is not information, and here it contradicted
+  what the user was reading. It is kept for the types a pattern decides, where
+  a verified check digit (1.0) and a bare run of digits (0.4) are different
+  claims.
+- **The document's language is part of the review.** It is shown per document
+  with a menu to correct it; correcting it re-runs `analyze` for that document
+  and clears its selection and type overrides, because the offsets come from a
+  different pass.
 - **The shared-string note carries no count.** `xlsx_shared_strings_reused` is
   a document-level note and the worker reports no reference count per shared
   value, so a number cannot be stated without inventing it. The row says the
@@ -583,8 +616,11 @@ the suite would then test the plumbing while the recorded figures describe the
 shipped model — but it is no longer a post-install download.
 
 **Precision measured, and left as it is.** On the French meeting-report fixture
-the detector reports about fifty spans, of which a handful are ordinary words:
-a section heading, the word after a colon. A POS filter was prototyped —
+the detector reports 34 spans, which the review screen collapses into 27 rows,
+6 of them ranked doubtful: `Participants`, `Décisions`, `Points`, `Annexe`,
+`Prochaine`, `Lieu` — section headings and the word after a colon, every one of
+them below the fold. Before these rules the same document produced about fifty
+rows with the noise mixed into them. A POS filter was prototyped —
 `AnalyzerEngine.analyze` takes pre-computed `nlp_artifacts`, so reading
 `.pos_` off the tokens costs no extra model time — and dropping single-token
 non-`PROPN` spans removed 10 false positives and also `Nantes`, a real location
@@ -599,8 +635,8 @@ address on the one value a reader would most want gone. Forty-four megabytes for
 two rows and a recall loss is not a trade worth shipping, so the two small
 models stay.
 
-**What the noise cost is paid with instead.** Three rules, none of which drops
-anything:
+**What the noise cost is paid with instead.** Five rules, only the first of
+which drops anything:
 
 - A `PERSON` or an `ORGANIZATION` is narrowed to the part of it that starts with
   a capital, because both are named with one in French and English. `la mairie
@@ -612,12 +648,20 @@ numéro de sécurité` — held no name to begin with and is dropped. `LOCATION`
 - `Detection.likely` is false for the shape the model gets wrong most often: a
   lone capitalised word opening a line. It is reported all the same — a one-word
   name in a table cell has that exact shape — but the review screen ranks it
-  under its own heading at the bottom of its type. `score` is the detector's
+  under its own heading at the bottom of the list. `score` is the detector's
   confidence and answers a different question; this one is ours.
+- A lone capitalised word that is a function word in the document's language is
+  refused outright. `Le`, opening a line, is not a brand — it is a French
+  article the model tagged because of the capital. The stop-word list is
+  spaCy's own, per language, so there is no hand-written list of pronouns to
+  keep in step with anything.
+- Adjacent address components are merged into one detection, postcode included:
+  `12 rue des Lilas`, `44000` and `Nantes` were three rows asking one question,
+  and a user who unticked one of them left the address half in the copy.
 - The review screen collapses every occurrence of a value into one row, case
-  ignored, because `operators.py` already assigns one pseudonym per
-  `(type, value.casefold())`. Showing eight occurrences apart would promise a
-  distinction the output does not make, and it is what turned a ten-line
+  ignored and type ignored, because `operators.py` already assigns one pseudonym
+  per `(type, value.casefold())`. Showing eight occurrences apart would promise
+  a distinction the output does not make, and it is what turned a ten-line
   document into fifty questions. The count the page announces is counted in rows
   for the same reason.
 

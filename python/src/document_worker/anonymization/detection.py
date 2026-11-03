@@ -6,10 +6,14 @@ review screen needs: a span, an entity type and a score per detection, plus
 recognizers that validate rather than pattern-match. What this module adds is
 the three decisions Presidio leaves open.
 
-**Both languages, every time.** A document is analyzed in French and in
-English and the results merged. Mixed-language documents are the norm for this
-audience, and asking a user to declare a document's language is asking them to
-be wrong about half of them.
+**One language for the names, both for the patterns.** Running both models
+over every document was measured as the main source of false positives: the
+English model reading a French report returned people as organizations and a
+postcode as a date. So the types a model guesses at come from the document's
+own language, which is guessed from the text and which the user can correct.
+The recognizers that validate rather than guess keep running in both
+languages — a check digit does not care about grammar, and Presidio ships no
+French credit card recognizer.
 
 **No country-specific recognizers.** ``countries=[]`` keeps the locale-agnostic
 recognizers — email, IBAN, credit card, phone, date — and drops the national
@@ -24,6 +28,7 @@ is the leak this feature exists to prevent.
 
 import re
 from collections.abc import Iterable
+from dataclasses import replace
 from functools import lru_cache
 
 from document_worker.anonymization.model import Detection, TextUnit
@@ -60,8 +65,23 @@ _DEPARTMENT = slice(5, 7)
 # Punctuation and whitespace a model sometimes leaves inside a span.
 _EDGE = ' \t\n\r\xa0.,;:!?()[]{}"«»…'
 
+# A word, for weighing one language's grammar against the other's. Accented
+# letters are in the class and digits are not: "où" is a French word and "2026"
+# belongs to no language.
+_WORD = re.compile(r"[a-z\xe0-\xff']+")
+
+# How much text to show on each side of a value in the review screen. A few
+# words: enough to tell a street from a town, short enough that thirty of them
+# stay scannable.
+_AROUND = 40
+
 # Types the model guesses at, as opposed to the ones a pattern decides.
 _NAME_TYPES = frozenset({"PERSON", "ORGANIZATION", "LOCATION"})
+
+# What only the document's own language may report. A date is in here because
+# spaCy's NER is what produces most of them: the English model reading a French
+# address returned the postcode "44000" as a date.
+_MODEL_TYPES = _NAME_TYPES | {"DATE_TIME"}
 
 # Where a capital is required. A person or an organization is named with one in
 # both languages, so the words the model sweeps up in front of a name — "la
@@ -73,6 +93,236 @@ _NAME_TYPES = frozenset({"PERSON", "ORGANIZATION", "LOCATION"})
 # copy, and the places the model gets wrong are single words anyway, which the
 # ranking below already covers.
 _CAPITALISED_TYPES = frozenset({"PERSON", "ORGANIZATION"})
+
+
+# A French postcode, and the shape the English pass reports as a date.
+_POSTCODE = re.compile(r"\d{5}")
+
+# What an address carries in front of a place name and the model never
+# reports: a house number — "12", "12 bis", "3 ter" — or a postcode. Matched
+# at the end of the text preceding the span, one step at a time, so that "12
+# rue des Lilas" and "44000, Nantes" are both reached from the place name.
+#
+# No newline on either side: a span reaching across a block boundary is what
+# `line_spans` exists to prevent, and rewriting one empties the next block.
+_LEADING_NUMBER = re.compile(
+    r"(?:\d{5}|\d{1,4}(?:[ \t]*(?:bis|ter))?)[ \t,]*\Z", re.IGNORECASE
+)
+
+# What may sit between two parts of one address, and nothing else: separators,
+# and at most the postcode no model reports. "rue des Lilas, 44000 Nantes" is
+# two detections with the postcode left between them, and the gap is the only
+# place it can be read from.
+_ADDRESS_GAP = re.compile(r"[ \t,]*(?:\d{5}[ \t,]*)?")
+
+
+def merge_addresses(
+    detections: Iterable[Detection], texts: dict[str, str]
+) -> list[Detection]:
+    """
+    Join the parts of a postal address into one detection.
+
+    The model reports a street, a postcode and a town as three values and the
+    house number as none, so replacing them one by one leaves "12 [LIEU 3],
+    [DATE 4] [LIEU 5]" in the copy: the number survives and the shape of the
+    address is still legible. An address is one piece of personal data and has
+    to be one decision.
+
+    A run is only joined when something says "address" rather than "two places
+    in a sentence": a postcode among the parts, or a house number in front of
+    them. Without that anchor, "Nantes, Rennes" stays two values.
+
+    Arguments:
+        detections: Detections for all units, ordered by unit then position.
+        texts: Each unit's text, by unit id, to read the gaps and the number.
+
+    Returns:
+        The detections with each address run replaced by the span covering it.
+    """
+    merged: list[Detection] = []
+    run: list[Detection] = []
+
+    def flush() -> None:
+        if run:
+            merged.extend(_join(run, texts))
+        run.clear()
+
+    for candidate in detections:
+        if not _is_address_part(candidate):
+            flush()
+            merged.append(candidate)
+            continue
+        if run and not _joinable(run[-1], candidate, texts):
+            flush()
+        run.append(candidate)
+    flush()
+    return sorted(merged, key=lambda d: (d.unit_id, d.start))
+
+
+def _is_address_part(detection: Detection) -> bool:
+    """A town or a street, or the postcode a model sometimes calls a date."""
+    return detection.entity_type == "LOCATION" or (
+        detection.entity_type == "DATE_TIME"
+        and _POSTCODE.fullmatch(detection.text.strip()) is not None
+    )
+
+
+def _joinable(left: Detection, right: Detection, texts: dict[str, str]) -> bool:
+    """Whether only separators sit between two parts of one address."""
+    if left.unit_id != right.unit_id:
+        return False
+    gap = texts.get(left.unit_id, "")[left.end : right.start]
+    return _ADDRESS_GAP.fullmatch(gap) is not None
+
+
+def _join(run: list[Detection], texts: dict[str, str]) -> list[Detection]:
+    """
+    Collapse a run into one LOCATION, or return it untouched.
+
+    Adjacency alone is not an address: "Nantes, Rennes" is two places in a
+    sentence. A postcode among the parts, or a house number in front of them,
+    is what says otherwise — and the number is then part of the value, since
+    leaving it behind is what keeps the address readable in the copy.
+    """
+    first, last = run[0], run[-1]
+    text = texts.get(first.unit_id, "")
+
+    start = first.start
+    while (number := _LEADING_NUMBER.search(text[:start])) is not None:
+        start = number.start()
+
+    anchored = (
+        start != first.start or _POSTCODE.search(text[start : last.end]) is not None
+    )
+    if not anchored:
+        return list(run)
+
+    return [_widen(run, text, start, last.end)]
+
+
+def _widen(run: list[Detection], text: str, start: int, end: int) -> Detection:
+    """One LOCATION covering the whole run, keeping the strongest score."""
+    return Detection(
+        run[0].unit_id,
+        start,
+        end,
+        "LOCATION",
+        max(part.score for part in run),
+        text[start:end],
+        True,
+    )
+
+
+@lru_cache(maxsize=len(LANGUAGES))
+def _stop_words(language: str) -> frozenset[str]:
+    """
+    The words spaCy itself calls stop words.
+
+    Writing this list by hand would be writing it wrong: the model that
+    produces the false positives already ships the vocabulary that describes
+    them. Imported here rather than at module level because the worker
+    redirects its output before any spaCy import runs.
+    """
+    from spacy.util import get_lang_class
+
+    return frozenset(get_lang_class(language).Defaults.stop_words)
+
+
+@lru_cache(maxsize=1)
+def _function_words() -> frozenset[str]:
+    """Stop words in either language, for rejecting a span whatever the pass."""
+    return frozenset().union(*(_stop_words(language) for language in LANGUAGES))
+
+
+def guess_language(text: str) -> str:
+    """
+    Which of the supported languages a document is written in.
+
+    Counting grammar words is enough here and costs nothing: a document carries
+    dozens of them, they are the words a language cannot be written without,
+    and the two lists are already loaded for rejecting false positives. A
+    library would answer the same question for every language on earth, and we
+    support two.
+
+    Arguments:
+        text: The extracted text, or enough of it to be representative.
+
+    Returns:
+        A language code from ``LANGUAGES``. French on a tie, including when the
+        text holds no grammar at all — a bare list of names says nothing about
+        its language, and French is what this audience writes.
+
+    """
+    words = _WORD.findall(text.casefold())
+    counts = {
+        language: sum(word in _stop_words(language) for word in words)
+        for language in LANGUAGES
+    }
+    return max(LANGUAGES, key=lambda language: counts[language])
+
+
+def is_function_word(value: str) -> bool:
+    """
+    Whether a span is one ordinary grammatical word rather than a name.
+
+    The model tags the first capitalised token of a segment, and in French
+    that token is very often "Le" — an article opening a sentence. No name is
+    ever a single stop word, so this is the one case that can be dropped
+    outright instead of ranked.
+
+    An all-capitals span is kept: "LE" is a plausible brand, and a two-letter
+    acronym is exactly the kind of value a user needs to be asked about.
+
+    Arguments:
+        value: The span's text.
+
+    Returns:
+        True when the span is a single stop word that is not an acronym.
+    """
+    word = value.strip()
+    if not word or " " in word or word.isupper():
+        return False
+    return word.casefold() in _function_words()
+
+
+def excerpt(text: str, start: int, end: int) -> str:
+    """
+    The value with a few words either side, on one line.
+
+    A value on its own is often unanswerable: "Loire" could be the river, the
+    department or, as it happens here, a meeting room. The surrounding words
+    are what make the question decidable, and keeping them short is what keeps
+    a list of thirty of them readable.
+
+    Arguments:
+        text: The unit's text.
+        start: Where the value begins, in that text.
+        end: Where it ends.
+
+    Returns:
+        One line, elided with "…" on each side that was cut.
+    """
+    left = _word_boundary(text, max(0, start - _AROUND), forward=True)
+    right = _word_boundary(text, min(len(text), end + _AROUND), forward=False)
+    around = " ".join(text[left:right].split())
+    return f"{'…' if left > 0 else ''}{around}{'…' if right < len(text) else ''}"
+
+
+def _word_boundary(text: str, cut: int, forward: bool) -> int:
+    """
+    Move a cut off the middle of a word.
+
+    A half word reads as a typo rather than as an elision, which is exactly
+    the doubt an excerpt exists to remove. A cut that lands at either end of
+    the text is left alone: nothing was severed there.
+    """
+    if cut in (0, len(text)):
+        return cut
+    if forward:
+        space = re.compile(r"\s").search(text, cut)
+        return space.end() if space else cut
+    space = max(text.rfind(" ", 0, cut), text.rfind("\n", 0, cut))
+    return space if space > 0 else cut
 
 
 def nir_key_matches(value: str) -> bool:
@@ -98,26 +348,35 @@ def nir_key_matches(value: str) -> bool:
     return 97 - int(body) % 97 == int(key)
 
 
-def detect(
-    units: Iterable[TextUnit], languages: Iterable[str] = LANGUAGES
-) -> list[Detection]:
+def detect(units: Iterable[TextUnit], language: str | None = None) -> list[Detection]:
     """
     Find personal data in each unit, in its own offset space.
 
     Arguments:
         units: What an adapter's ``extract`` returned.
-        languages: Languages to analyze in. Both, unless a caller has a reason.
+        language: The language the document is written in. Guessed from the
+            text when not given, which is what happens until a user corrects
+            it.
 
     Returns:
         Detections with overlaps resolved, ordered by unit then position.
     """
+    # Read once: the language is decided from the whole document before the
+    # first unit is analyzed, and `units` is only promised to be iterable.
+    analyzed = [unit for unit in units if unit.text.strip()]
+    texts = {unit.id: unit.text for unit in analyzed}
+    language = language or guess_language("\n".join(texts.values()))
+
     found: list[Detection] = []
-    for unit in units:
-        if not unit.text.strip():
-            continue
-        for language in languages:
-            found.extend(_analyze(unit, language))
-    return resolve_overlaps(found)
+    for unit in analyzed:
+        for pass_language in LANGUAGES:
+            found.extend(_analyze(unit, pass_language, names=pass_language == language))
+    # The excerpt is attached last, once the spans are final: widening an
+    # address or dropping an overlap changes what the user is being shown.
+    return [
+        replace(item, excerpt=excerpt(texts[item.unit_id], item.start, item.end))
+        for item in merge_addresses(resolve_overlaps(found), texts)
+    ]
 
 
 def resolve_overlaps(detections: Iterable[Detection]) -> list[Detection]:
@@ -154,7 +413,7 @@ def _overlaps(one: Detection, other: Detection) -> bool:
     )
 
 
-def _analyze(unit: TextUnit, language: str) -> list[Detection]:
+def _analyze(unit: TextUnit, language: str, names: bool) -> list[Detection]:
     # `entities=` is not passed on purpose. Not every type has a recognizer in
     # every language — Presidio ships no French credit card recognizer, and the
     # English pass covers it — and asking for one that is missing is a
@@ -171,11 +430,17 @@ def _analyze(unit: TextUnit, language: str) -> list[Detection]:
     for result in results:
         if result.entity_type not in ENTITY_TYPES:
             continue
+        if not names and result.entity_type in _MODEL_TYPES:
+            continue
         for start, end in line_spans(unit.text, result.start, result.end):
             if result.entity_type in _CAPITALISED_TYPES:
                 start, end = name_span(unit.text, start, end)
                 if start == end:
                     continue
+            if result.entity_type in _NAME_TYPES and is_function_word(
+                unit.text[start:end]
+            ):
+                continue
             found.append(
                 Detection(
                     unit.id,

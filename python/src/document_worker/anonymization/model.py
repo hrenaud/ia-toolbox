@@ -50,6 +50,9 @@ class Detection:
             because the same shape is what a one-word name in a table cell
             looks like. ``score`` is the detector's own confidence and answers
             a different question; this one is ours.
+        excerpt: The value with a few words either side, on one line, elided
+            with "…" where it was cut. "Loire" alone is a question nobody can
+            answer; "salle Loire — locaux de" is a room.
     """
 
     unit_id: str
@@ -59,6 +62,7 @@ class Detection:
     score: float
     text: str
     likely: bool = True
+    excerpt: str = ""
 
 
 @dataclass(frozen=True)

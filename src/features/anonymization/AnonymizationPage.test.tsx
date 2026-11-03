@@ -39,9 +39,11 @@ function analyzed(fields: Partial<AnalyzedDocument> = {}): AnalyzedDocument {
         score: 0.9,
         text: "Jean Dupont",
         likely: true,
+        excerpt: "…dossier de Jean Dupont est transféré…",
       },
     ],
     notes: [],
+    language: "fr",
     ...fields,
   };
 }
@@ -235,6 +237,7 @@ describe("reviewing what was found", () => {
             score: 0.9,
             text: "Jean Dupont",
             likely: true,
+            excerpt: "…dossier de Jean Dupont est transféré…",
           },
           {
             unit_id: "content",
@@ -244,6 +247,7 @@ describe("reviewing what was found", () => {
             score: 0.9,
             text: "Jean Dupont",
             likely: true,
+            excerpt: "…dossier de Jean Dupont est transféré…",
           },
         ],
       }),
@@ -272,6 +276,7 @@ describe("reviewing what was found", () => {
             score: 1,
             text: "a@b.fr",
             likely: true,
+            excerpt: "…écrire à a@b.fr avant…",
           },
         ],
       }),
@@ -340,6 +345,29 @@ describe("reviewing what was found", () => {
     expect(screen.getByRole("checkbox", { name: /Jean Dupont/ })).toBeVisible();
   });
 
+  /**
+   * The guess is shown because it decides everything the user is reading: a
+   * French report read by the English model returns people as organizations.
+   * Correcting it reads the file again rather than relabelling what is there.
+   */
+  it("shows the language it read the document in, and reads it again when corrected", async () => {
+    await reachReview();
+    const choice = screen.getByRole("combobox", {
+      name: fr["anonymization.language"],
+    });
+    expect(choice).toHaveValue("fr");
+
+    await userEvent.selectOptions(choice, "en");
+
+    await waitFor(() =>
+      expect(api.analyzeDocuments).toHaveBeenLastCalledWith(
+        ["/docs/rapport.docx"],
+        expect.any(Function),
+        "en",
+      ),
+    );
+  });
+
   it("comes back to the file selection without writing", async () => {
     await reachReview();
 
@@ -382,6 +410,41 @@ describe("writing the copies", () => {
       operator: "mask",
       language: "fr",
     });
+  });
+
+  /**
+   * The user is the one who knows whether "Claire Dubois" is a person or a
+   * firm. Their answer is what the worker is sent, for every occurrence of the
+   * value: the type decides the label the copy will carry.
+   */
+  it("sends the type the user corrected, not the one the model guessed", async () => {
+    await reachReview();
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: /Jean Dupont/ }),
+      "ORGANIZATION",
+    );
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: /Jean Dupont/ }),
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", { name: fr["anonymization.confirm"] }),
+    );
+
+    await waitFor(() => expect(api.anonymizeDocuments).toHaveBeenCalled());
+    expect(vi.mocked(api.anonymizeDocuments).mock.calls[0][0]).toEqual([
+      {
+        inputPath: "/docs/rapport.docx",
+        detections: [
+          {
+            unit_id: "content",
+            start: 0,
+            end: 11,
+            entity_type: "ORGANIZATION",
+          },
+        ],
+      },
+    ]);
   });
 
   it("will not write when the user kept nothing", async () => {

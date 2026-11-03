@@ -13,9 +13,10 @@ import {
   confidenceWord,
   describeAnonymizationError,
   detectionKey,
-  groupByEntity,
   groupByValue,
   isSelectable,
+  showsConfidence,
+  valueKey,
 } from "./review";
 
 /**
@@ -34,6 +35,7 @@ function detection(fields: Partial<Detection> = {}): Detection {
     score: 0.85,
     text: "Jean Dupont",
     likely: true,
+    excerpt: "…dossier de Jean Dupont est transféré…",
     ...fields,
   };
 }
@@ -89,27 +91,80 @@ describe("confidence is a word, never a shade", () => {
     expect(en).toHaveProperty(`anonymization.confidence.${word}`);
     expect(fr).toHaveProperty(`anonymization.confidence.${word}`);
   });
+
+  /**
+   * Every type the model guesses at scores exactly 0.85, so "high confidence"
+   * was printed on every name, organization and place — the three types the
+   * user has to check by hand. A word that is always the same word says
+   * nothing, and here it was saying the opposite of the truth.
+   */
+  it.each(["PERSON", "ORGANIZATION", "LOCATION", "DATE_TIME"])(
+    "says nothing about confidence for %s, which the model only guesses",
+    (type) => {
+      expect(showsConfidence(type)).toBe(false);
+    },
+  );
+
+  it.each(["EMAIL_ADDRESS", "PHONE_NUMBER", "IBAN_CODE", "CREDIT_CARD"])(
+    "still reports confidence for %s, which a pattern decides",
+    (type) => {
+      expect(showsConfidence(type)).toBe(true);
+    },
+  );
 });
 
 describe("grouping", () => {
-  it("groups by entity type and keeps the worker's order", () => {
-    const groups = groupByEntity([
-      detection({ entity_type: "EMAIL_ADDRESS", text: "a@b.fr" }),
-      detection({ entity_type: "PERSON", text: "Jean" }),
-      detection({ entity_type: "PERSON", text: "Marie" }),
+  /**
+   * One value is one row, whatever the models made of it. Two models reading
+   * one document returned "Claire Dubois" as a person and as an organization,
+   * and the screen asked about her twice, under two headings, both times
+   * claiming to be sure. The row carries a proposal the user can correct.
+   */
+  it("asks once about a value the models typed two ways", () => {
+    const rows = groupByValue([
+      detection({ text: "Claire Dubois", start: 0, end: 13 }),
+      detection({
+        text: "Claire Dubois",
+        start: 40,
+        end: 53,
+        entity_type: "ORGANIZATION",
+      }),
     ]);
 
-    expect(groups.map((group) => group.entityType)).toEqual([
-      "PERSON",
-      "EMAIL_ADDRESS",
+    expect(rows).toHaveLength(1);
+    expect(rows[0].entityType).toBe("PERSON");
+    expect(rows[0].detections).toHaveLength(2);
+  });
+
+  it("gives one value one key, whatever type was guessed", () => {
+    expect(valueKey(detection({ entity_type: "ORGANIZATION" }))).toBe(
+      valueKey(detection({ entity_type: "PERSON" })),
+    );
+  });
+
+  /** The value alone is often unanswerable; the words around it are not. */
+  it("shows the first occurrence in its context", () => {
+    const rows = groupByValue([
+      detection({ text: "Loire", excerpt: "…salle Loire à 14 heures…" }),
+      detection({ text: "Loire", start: 40, end: 45, excerpt: "…la Loire…" }),
     ]);
-    expect(groups[0].detections).toHaveLength(2);
+
+    expect(rows[0].excerpt).toBe("…salle Loire à 14 heures…");
+  });
+
+  it("keeps the worker's type order between rows", () => {
+    const rows = groupByValue([
+      detection({ text: "a@b.fr", entity_type: "EMAIL_ADDRESS" }),
+      detection({ text: "Jean", start: 20, end: 24 }),
+    ]);
+
+    expect(rows.map((row) => row.text)).toEqual(["Jean", "a@b.fr"]);
   });
 
   it("keeps a type the worker added and this build does not know", () => {
-    const groups = groupByEntity([detection({ entity_type: "FUTURE_TYPE" })]);
+    const rows = groupByValue([detection({ entity_type: "FUTURE_TYPE" })]);
 
-    expect(groups.map((group) => group.entityType)).toEqual(["FUTURE_TYPE"]);
+    expect(rows[0].entityType).toBe("FUTURE_TYPE");
   });
 
   /**

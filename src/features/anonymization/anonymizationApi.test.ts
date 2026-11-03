@@ -42,6 +42,7 @@ function analysis(id: string) {
       },
     ],
     notes: ["markup_code_not_analyzed"],
+    language: "fr",
   };
 }
 
@@ -91,6 +92,38 @@ describe("analyzeDocuments", () => {
     expect(updates.map((doc) => doc.status)).toEqual(["analyzing", "success"]);
     expect(updates[1].detections[0].text).toBe("Jean Dupont");
     expect(updates[1].notes).toEqual(["markup_code_not_analyzed"]);
+  });
+
+  /**
+   * A document read by the wrong model is a document whose names are all
+   * wrong, and only the user can see that. So the guess travels back to the
+   * screen, and the screen can send a correction and have the file read again.
+   */
+  it("carries the language the worker read the document in", async () => {
+    request.mockResolvedValue(analysis("x"));
+    const { updates, onUpdate } = collect();
+
+    await analyzeDocuments(["/a.txt"], onUpdate);
+
+    expect(request).toHaveBeenCalledWith({
+      operation: "analyze",
+      input_path: "/a.txt",
+    });
+    expect(updates.at(-1)?.language).toBe("fr");
+  });
+
+  it("sends the language back when the user corrected the guess", async () => {
+    request.mockResolvedValue({ ...analysis("x"), language: "en" });
+    const { updates, onUpdate } = collect();
+
+    await analyzeDocuments(["/a.txt"], onUpdate, "en");
+
+    expect(request).toHaveBeenCalledWith({
+      operation: "analyze",
+      input_path: "/a.txt",
+      language: "en",
+    } satisfies WorkerRequest);
+    expect(updates.at(-1)?.language).toBe("en");
   });
 
   it("keeps going after a document that cannot be read", async () => {

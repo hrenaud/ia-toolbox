@@ -67,13 +67,16 @@ include.
 
 1. **Select the documents and an output folder.** Files in an unsupported format are listed and
    skipped, never silently dropped.
-2. **Find personal information.** Each document is read and what was found is listed by type —
-   person names, organizations, places, email addresses, phone numbers, IBANs, payment card
-   numbers, French social security numbers, dates. Each item shows how confident the detector is,
-   in words, and where in the document it is.
-3. **Choose what to replace.** Nothing is selected at the start, and nothing is written until you
-   confirm. Each type can be selected as a whole. Text the format cannot rewrite without breaking
-   the document is shown for information and offers no choice.
+2. **Find personal information.** Each document is read and what was found is listed, one row per
+   value: the value, a few words of the document either side of its first occurrence, where it is,
+   and how many times it appears. The language the names were read in is shown above the list and
+   can be corrected, which reads the document again.
+3. **Choose what to replace.** Each row proposes a type — person name, organization, place, email
+   address, phone number, IBAN, payment card number, French social security number, date — in a
+   menu you can change: your answer applies to every occurrence of that value. Then tick the rows
+   to replace. Nothing is selected at the start, and nothing is written until you confirm. Text the
+   format cannot rewrite without breaking the document is shown for information and offers no
+   choice.
 4. **Confirm.** Choose between a label (`[PERSON 1]`) or masking characters (`●●●●●`), then create
    the copy. Each document succeeds or fails on its own: one failure does not stop the others.
 
@@ -102,12 +105,24 @@ the word after a colon — alongside everything that really is personal informat
 costs a click; a value that is never reported is a value that stays in the copy, so the balance is
 deliberately set that way. Read the list before confirming.
 
-Two things make that list readable. One value is one row, however many times it appears: every
-occurrence of a name gets the same pseudonym anyway, so asking about each one would ask the same
-question again. And the shape the detector gets wrong most often — a lone capitalised word opening
-a line or a heading — is ranked under a **Less likely** heading at the bottom of its type rather
-than dropped, because a one-word name in a table cell looks exactly the same. On the sample meeting
-report, that turns fifty questions into twenty-six, with nine doubtful ones grouped at the end.
+Three things make that list readable. One value is one row, however many times it appears and
+whatever type was guessed for it: every occurrence of a name gets the same pseudonym anyway, so
+asking about each one would ask the same question again. The type is a proposal in a menu rather
+than a verdict, because the detector does get it wrong and you are the one who knows whether a name
+is a person or a firm. And the shape the detector gets wrong most often — a lone capitalised word
+opening a line or a heading — is ranked under a **Less likely** heading at the bottom rather than
+dropped, because a one-word name in a table cell looks exactly the same. On the sample meeting
+report, that turns thirty-four spans into twenty-seven questions, six of them doubtful and grouped
+at the end.
+
+Names are read by a model for one language, the one shown above the list; patterns such as IBANs
+and email addresses are language-independent. A document read in the wrong language has its names
+largely wrong, which is why the guess is shown and can be corrected rather than hidden.
+
+How confident the detector is appears in words, but only where it means something: a pattern with a
+verified check digit and a run of digits that merely looks like a phone number are not the same
+claim. Names, organizations, places and dates carry no such word — the model gives them all the
+same score, so printing it would say nothing.
 
 ### Naming of the copy
 

@@ -98,8 +98,11 @@ def process_anonymization(request):
 
     try:
         if request.operation == "analyze":
-            analysis = pipeline.analyze_file(request.input_path)
+            analysis = pipeline.analyze_file(
+                request.input_path, language=request.language
+            )
             payload = {
+                "language": analysis.language,
                 "units": [
                     {
                         "id": unit.id,
@@ -117,6 +120,7 @@ def process_anonymization(request):
                         "score": found.score,
                         "text": found.text,
                         "likely": found.likely,
+                        "excerpt": found.excerpt,
                     }
                     for found in analysis.detections
                 ],

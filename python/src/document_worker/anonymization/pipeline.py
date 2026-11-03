@@ -28,11 +28,20 @@ _STALE = "The document changed since it was analyzed. Analyze it again, then ret
 
 @dataclass(frozen=True)
 class Analysis:
-    """What a document contains, for the user to judge."""
+    """
+    What a document contains, for the user to judge.
+
+    Attributes:
+        language: The language the names were read in, whether it was given or
+            guessed. Reported back so the review screen can show it and let a
+            user correct it: a wrong guess is a whole document read by the
+            wrong model, and the user is the only one who can see that.
+    """
 
     units: list[TextUnit]
     detections: list[Detection]
     notes: tuple[str, ...]
+    language: str = "fr"
 
 
 @dataclass(frozen=True)
@@ -43,31 +52,37 @@ class Written:
     notes: tuple[str, ...]
 
 
-def analyze_file(input_path: Path) -> Analysis:
+def analyze_file(input_path: Path, language: str | None = None) -> Analysis:
     """
     Read a document and report the personal data in it. Writes nothing.
 
     Arguments:
         input_path: Absolute path to the document to analyze.
+        language: The language to read the names in. Guessed from the text
+            when not given, which is the case until a user corrects it.
 
     Returns:
-        The units, the detections in them, and the notes about content that is
-        not analyzed.
+        The units, the detections in them, the language the names were read
+        in, and the notes about content that is not analyzed.
 
     Raises:
         AdapterError: The document cannot be read in this format.
     """
-    from document_worker.anonymization.detection import detect
+    from document_worker.anonymization.detection import detect, guess_language
 
     adapter = _adapter_for(input_path)
     extraction = adapter.extract(input_path)
+    language = language or guess_language(
+        "\n".join(unit.text for unit in extraction.units)
+    )
     return Analysis(
         units=extraction.units,
         # Units the format never rewrites are analyzed too. Their detections are
         # shown and not offered for replacement, which is the whole reason the
         # user can be told a formula still holds a name.
-        detections=detect(extraction.units),
+        detections=detect(extraction.units, language=language),
         notes=extraction.notes,
+        language=language,
     )
 
 

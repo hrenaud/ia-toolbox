@@ -15,6 +15,14 @@ export interface AnalyzedDocument {
   detections: Detection[];
   /** Codes for content that was read but not analyzed, or not rewritten. */
   notes: string[];
+  /**
+   * The language the names were read in, once an analysis has said so.
+   *
+   * Optional because the anonymize phase builds these objects too, and there it
+   * says nothing about the document's language — only about the labels it
+   * writes, which is a different choice.
+   */
+  language?: string;
   /** Where the anonymized copy went, once there is one. */
   outputPath?: string;
   errorCode?: string;
@@ -51,10 +59,16 @@ export async function loadAnonymizationFormats(): Promise<FormatInfo[]> {
  * and nine of them are fine, so each one carries its own error code. The
  * worker going away is different: every remaining document would fail the same
  * way, so that error is raised instead of repeated.
+ *
+ * `language` is the correction the user made to the guess, when they made one.
+ * Left out, the worker reads the text and decides, and reports what it decided:
+ * a document read by the wrong model has every name wrong, and only the user
+ * can see that.
  */
 export async function analyzeDocuments(
   inputPaths: string[],
   onUpdate: (document: AnalyzedDocument) => void,
+  language?: string,
 ): Promise<void> {
   const client = await getClient();
   for (const inputPath of inputPaths) {
@@ -69,6 +83,7 @@ export async function analyzeDocuments(
     const result = await client.request({
       operation: "analyze",
       input_path: inputPath,
+      ...(language ? { language } : {}),
     });
     if (result.event !== "result") throw new WorkerError("invalid_response");
     if (result.status === "error") {
@@ -85,6 +100,7 @@ export async function analyzeDocuments(
         units: result.units,
         detections: result.detections,
         notes: result.notes,
+        language: result.language,
       });
     }
   }

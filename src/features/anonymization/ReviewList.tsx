@@ -3,11 +3,13 @@ import type { AnalyzedUnit, Detection } from "../../app/worker/sidecarClient";
 import { describeLocation } from "./locationLabels";
 import type { ValueRow } from "./review";
 import {
+  ENTITY_TYPES,
   confidenceWord,
   detectionKey,
-  groupByEntity,
   groupByValue,
   isSelectable,
+  showsConfidence,
+  valueKey,
 } from "./review";
 
 type Translations = Record<keyof typeof en, string>;
@@ -17,33 +19,38 @@ interface ReviewListProps {
   units: AnalyzedUnit[];
   /** Keys of the detections the user has kept, owned by the page. */
   selected: ReadonlySet<string>;
+  /** The type the user chose for a value, by `valueKey`, when they chose one. */
+  types: Readonly<Record<string, string>>;
   onSelectionChange: (next: Set<string>) => void;
+  onTypeChange: (key: string, entityType: string) => void;
   t: Translations;
 }
 
 /**
- * What one document holds, grouped by type then by value, each row a choice.
+ * What one document holds: one row per value, each row one decision.
  *
- * Grouping is what makes a decision possible on a document with two hundred
- * detections: "every email address" is something a user can decide, "item 47"
- * is not. Grouping by value is the same argument one level down — a name found
- * eight times is one decision, and showing it eight times turned a ten-line
- * document into fifty questions. Each row says its type, how sure the detector
- * is and where it sits, all three in words: this list is the only place the
- * user sees any of it.
+ * Grouping by type was the first design and it asked the same question several
+ * times — a name found eight times was eight rows, and two models disagreeing
+ * about one name put it under two headings, both claiming to be sure. So a
+ * value appears once, with the first occurrence in its context, and the type is
+ * a proposal in a menu the user can change: their answer applies to every
+ * occurrence of that value. Place and count are in words, because this list is
+ * the only place the user sees any of it.
  *
  * The values the model is least sure of sit under their own heading at the
- * bottom of their type, because they are mostly ordinary words and reading
- * them mixed into the real ones is what made the list unusable.
+ * bottom, because they are mostly ordinary words and reading them mixed into
+ * the real ones is what made the list unusable.
  */
 export function ReviewList({
   detections,
   units,
   selected,
+  types,
   onSelectionChange,
+  onTypeChange,
   t,
 }: ReviewListProps) {
-  const toggleGroup = (keys: string[]) => {
+  const toggleRow = (keys: string[]) => {
     const next = new Set(selected);
     const all = keys.every((key) => next.has(key));
     for (const key of keys) {
@@ -53,122 +60,116 @@ export function ReviewList({
     onSelectionChange(next);
   };
 
+  const typeLabel = (entityType: string) =>
+    t[`anonymization.entity.${entityType}` as keyof Translations] ?? entityType;
+
+  const rows = groupByValue(detections);
+  const likely = rows.filter((row) => row.likely);
+  const unlikely = rows.filter((row) => !row.likely);
+
+  const renderRow = (row: ValueRow) => {
+    const key = valueKey(row.detections[0]);
+    const keys = row.detections
+      .filter((detection) => isSelectable(detection, units))
+      .map(detectionKey);
+    const entityType = types[key] ?? row.entityType;
+    const places = new Set(
+      row.detections.map((detection) => {
+        const unit = units.find(
+          (candidate) => candidate.id === detection.unit_id,
+        );
+        return unit ? describeLocation(unit.location, t) : "";
+      }),
+    );
+    // One place, or none: naming the first of several would be wrong.
+    const place = places.size === 1 ? [...places][0] : "";
+    const confidence = showsConfidence(entityType)
+      ? t[
+          `anonymization.confidence.${confidenceWord(
+            Math.max(...row.detections.map((found) => found.score)),
+          )}` as keyof Translations
+        ]
+      : "";
+    const times =
+      row.detections.length > 1
+        ? t["anonymization.occurrences"].replace(
+            "{count}",
+            String(row.detections.length),
+          )
+        : "";
+    const meta = [confidence, place, times].filter(Boolean).join(" · ");
+
+    // A value the format cannot rewrite is shown and not offered: hiding it
+    // would be the user's only sign that it is in the file. Its type is not
+    // offered either — correcting it would change nothing.
+    if (keys.length === 0) {
+      return (
+        <li className="review-item frozen" key={key}>
+          <span className="review-text">{row.text}</span>
+          <span className="review-meta">
+            {[typeLabel(entityType), meta].filter(Boolean).join(" · ")}
+          </span>
+          {row.excerpt && <span className="review-excerpt">{row.excerpt}</span>}
+          <span className="review-badge">
+            {t["anonymization.notRewritable"]}
+          </span>
+          <span className="review-help">
+            {t["anonymization.notRewritableHelp"]}
+          </span>
+        </li>
+      );
+    }
+
+    return (
+      <li className="review-item" key={key}>
+        <label className="review-choice">
+          <input
+            type="checkbox"
+            checked={keys.every((one) => selected.has(one))}
+            onChange={() => toggleRow(keys)}
+          />
+          <span className="review-text">{row.text}</span>
+          {meta && <span className="review-meta">{meta}</span>}
+        </label>
+        {row.excerpt && <span className="review-excerpt">{row.excerpt}</span>}
+        <select
+          className="review-type"
+          aria-label={t["anonymization.typeOf"].replace("{value}", row.text)}
+          value={entityType}
+          onChange={(event) => onTypeChange(key, event.target.value)}
+        >
+          {/* A type this build does not know is still the worker's answer, so
+              it is offered rather than silently turned into something else. */}
+          {(ENTITY_TYPES.includes(entityType as (typeof ENTITY_TYPES)[number])
+            ? ENTITY_TYPES
+            : [entityType, ...ENTITY_TYPES]
+          ).map((option) => (
+            <option key={option} value={option}>
+              {typeLabel(option)}
+            </option>
+          ))}
+        </select>
+      </li>
+    );
+  };
+
+  if (rows.length === 0) return null;
+
   return (
     <>
-      {groupByEntity(detections).map((group) => {
-        const label =
-          t[`anonymization.entity.${group.entityType}` as keyof Translations] ??
-          group.entityType;
-        const selectableKeys = group.detections
-          .filter((detection) => isSelectable(detection, units))
-          .map(detectionKey);
+      <ul className="review-list">{likely.map(renderRow)}</ul>
 
-        const rows = groupByValue(group.detections);
-        const likely = rows.filter((row) => row.likely);
-        const unlikely = rows.filter((row) => !row.likely);
-
-        const renderRow = (row: ValueRow) => {
-          const keys = row.detections
-            .filter((detection) => isSelectable(detection, units))
-            .map(detectionKey);
-          const places = new Set(
-            row.detections.map((detection) => {
-              const unit = units.find(
-                (candidate) => candidate.id === detection.unit_id,
-              );
-              return unit ? describeLocation(unit.location, t) : "";
-            }),
-          );
-          // One place, or none: naming the first of several would be wrong.
-          const place = places.size === 1 ? [...places][0] : "";
-          const confidence =
-            t[
-              `anonymization.confidence.${confidenceWord(
-                Math.max(...row.detections.map((found) => found.score)),
-              )}` as keyof Translations
-            ];
-          const times =
-            row.detections.length > 1
-              ? t["anonymization.occurrences"].replace(
-                  "{count}",
-                  String(row.detections.length),
-                )
-              : "";
-          const detail = (
-            <>
-              <span className="review-text">{row.text}</span>
-              <span className="review-meta">
-                {label} · {confidence}
-                {place && ` · ${place}`}
-                {times && ` · ${times}`}
-              </span>
-            </>
-          );
-          const key = detectionKey(row.detections[0]);
-
-          // A value the format cannot rewrite is shown and not offered:
-          // hiding it would be the user's only sign that it is in the file.
-          if (keys.length === 0) {
-            return (
-              <li className="review-item frozen" key={key}>
-                {detail}
-                <span className="review-badge">
-                  {t["anonymization.notRewritable"]}
-                </span>
-                <span className="review-help">
-                  {t["anonymization.notRewritableHelp"]}
-                </span>
-              </li>
-            );
-          }
-
-          return (
-            <li className="review-item" key={key}>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={keys.every((one) => selected.has(one))}
-                  onChange={() => toggleGroup(keys)}
-                />
-                {detail}
-              </label>
-            </li>
-          );
-        };
-
-        return (
-          <fieldset className="review-group" key={group.entityType}>
-            <legend>
-              {label} ({rows.length})
-            </legend>
-
-            {selectableKeys.length > 0 && (
-              <label className="review-group-select">
-                <input
-                  type="checkbox"
-                  checked={selectableKeys.every((key) => selected.has(key))}
-                  onChange={() => toggleGroup(selectableKeys)}
-                />
-                <span>{t["anonymization.selectGroup"]}</span>
-              </label>
-            )}
-
-            <ul className="review-list">{likely.map(renderRow)}</ul>
-
-            {unlikely.length > 0 && (
-              <>
-                <p className="review-less-likely">
-                  <strong>{t["anonymization.lessLikely"]}</strong>
-                  <span className="review-help">
-                    {t["anonymization.lessLikelyHelp"]}
-                  </span>
-                </p>
-                <ul className="review-list">{unlikely.map(renderRow)}</ul>
-              </>
-            )}
-          </fieldset>
-        );
-      })}
+      {unlikely.length > 0 && (
+        <>
+          <p className="review-less-likely">
+            <strong>{t["anonymization.lessLikely"]}</strong>
+            <span className="review-help">
+              {t["anonymization.lessLikelyHelp"]}
+            </span>
+          </p>
+          <ul className="review-list">{unlikely.map(renderRow)}</ul>
+        </>
+      )}
     </>
   );
 }

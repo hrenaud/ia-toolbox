@@ -48,12 +48,22 @@ class KeptDetection:
 
 @dataclass(frozen=True)
 class Request:
+    """
+    One parsed request.
+
+    Attributes:
+        language: For ``analyze``, the language the document is written in,
+            and None when the caller has none to offer — the worker guesses it
+            and reports what it guessed. For ``anonymize``, the language of
+            the replacement labels, which defaults to French.
+    """
+
     id: str
     operation: str
     input_path: Path | None = None
     output_directory: Path | None = None
     operator: str = "replace"
-    language: str = "fr"
+    language: str | None = None
     detections: tuple[KeptDetection, ...] = ()
 
 
@@ -75,7 +85,14 @@ def parse_request(line: str) -> Request:
         )
     paths = {name: _path(data, name, request_id) for name in _OPERATIONS[operation]}
     if operation != "anonymize":
-        return Request(request_id, operation, **paths)
+        return Request(
+            request_id,
+            operation,
+            **paths,
+            # Optional, and absent is not French: a user who has not corrected
+            # the guess has not made a claim about the document.
+            language=_optional_choice(data, "language", _LANGUAGES, request_id),
+        )
     return Request(
         request_id,
         operation,
@@ -103,6 +120,15 @@ def _choice(data: dict, name: str, allowed: tuple[str, ...], request_id: str) ->
     if value not in allowed:
         raise RequestError("invalid_request", _INVALID_PAYLOAD, request_id)
     return value
+
+
+def _optional_choice(
+    data: dict, name: str, allowed: tuple[str, ...], request_id: str
+) -> str | None:
+    """Read a choice that may be absent, without inventing one for the caller."""
+    if name not in data:
+        return None
+    return _choice(data, name, allowed, request_id)
 
 
 def _kept_detections(data: dict, request_id: str) -> tuple[KeptDetection, ...]:

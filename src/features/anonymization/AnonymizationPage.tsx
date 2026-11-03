@@ -11,6 +11,7 @@ import {
 } from "./anonymizationApi";
 import { ReviewList } from "./ReviewList";
 import {
+  DOCUMENT_LANGUAGES,
   anonymizedName,
   describeAnonymizationError,
   detectionKey,
@@ -29,6 +30,15 @@ type Phase = "select" | "analyzing" | "review" | "writing" | "results";
 /** Keys of the kept detections, per document path. */
 type Selection = Record<string, Set<string>>;
 
+/**
+ * The types the user corrected, by document path then by `valueKey`.
+ *
+ * Held here rather than in the list because they have to outlive it: the list
+ * is remounted whenever an analysis comes back, and because this is what the
+ * worker is sent at the end.
+ */
+type TypeChoices = Record<string, Record<string, string>>;
+
 function basenameOf(path: string): string {
   return path.split(/[\\/]/).pop() || path;
 }
@@ -40,6 +50,7 @@ export function AnonymizationPage({ locale }: AnonymizationPageProps) {
   const [phase, setPhase] = useState<Phase>("select");
   const [documents, setDocuments] = useState<AnalyzedDocument[]>([]);
   const [selection, setSelection] = useState<Selection>({});
+  const [typeChoices, setTypeChoices] = useState<TypeChoices>({});
   const [operator, setOperator] = useState("replace");
   const [results, setResults] = useState<AnalyzedDocument[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -188,6 +199,7 @@ export function AnonymizationPage({ locale }: AnonymizationPageProps) {
     setError(null);
     setDocuments([]);
     setSelection({});
+    setTypeChoices({});
     setResults([]);
     setStatusMessage(t["anonymization.analyzing"]);
 
@@ -198,6 +210,31 @@ export function AnonymizationPage({ locale }: AnonymizationPageProps) {
       setPhase("review");
     } catch (err) {
       setPhase("select");
+      reportBlockingError(
+        err instanceof Error ? err.message : t["anonymization.unknownError"],
+      );
+    }
+  };
+
+  /**
+   * Read one document again in the language the user says it is in.
+   *
+   * Everything decided about the old reading is dropped: the offsets come from
+   * a different pass, so a kept key or a corrected type would either miss or,
+   * worse, land on a different span of the same document.
+   */
+  const handleLanguage = async (inputPath: string, language: string) => {
+    setSelection((prev) => ({ ...prev, [inputPath]: new Set<string>() }));
+    setTypeChoices((prev) => ({ ...prev, [inputPath]: {} }));
+    setStatusMessage(t["anonymization.analyzing"]);
+    try {
+      await analyzeDocuments(
+        [inputPath],
+        (document) => upsert(setDocuments, document),
+        language,
+      );
+      setStatusMessage("");
+    } catch (err) {
       reportBlockingError(
         err instanceof Error ? err.message : t["anonymization.unknownError"],
       );
@@ -257,11 +294,15 @@ export function AnonymizationPage({ locale }: AnonymizationPageProps) {
         const keys = selection[document.inputPath] ?? new Set<string>();
         const detections: KeptDetection[] = document.detections
           .filter((detection) => keys.has(detectionKey(detection)))
-          .map(({ unit_id, start, end, entity_type }) => ({
-            unit_id,
-            start,
-            end,
-            entity_type,
+          .map((detection) => ({
+            unit_id: detection.unit_id,
+            start: detection.start,
+            end: detection.end,
+            // The user's answer, for every occurrence of the value: it decides
+            // the label the copy will carry.
+            entity_type:
+              typeChoices[document.inputPath]?.[valueKey(detection)] ??
+              detection.entity_type,
           }));
         return { inputPath: document.inputPath, detections };
       })
@@ -450,14 +491,54 @@ export function AnonymizationPage({ locale }: AnonymizationPageProps) {
                   </p>
                 )}
 
+              {document.status === "success" && (
+                <p className="document-language">
+                  <label>
+                    {t["anonymization.language"]}
+                    <select
+                      value={document.language ?? "fr"}
+                      onChange={(event) =>
+                        void handleLanguage(
+                          document.inputPath,
+                          event.target.value,
+                        )
+                      }
+                    >
+                      {DOCUMENT_LANGUAGES.map((code) => (
+                        <option key={code} value={code}>
+                          {
+                            t[
+                              `anonymization.language.${code}` as keyof typeof t
+                            ]
+                          }
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <span className="field-help">
+                    {t["anonymization.languageHelp"]}
+                  </span>
+                </p>
+              )}
+
               <ReviewList
                 detections={document.detections}
                 units={document.units}
                 selected={selection[document.inputPath] ?? new Set<string>()}
+                types={typeChoices[document.inputPath] ?? {}}
                 onSelectionChange={(next) =>
                   setSelection((prev) => ({
                     ...prev,
                     [document.inputPath]: next,
+                  }))
+                }
+                onTypeChange={(key, entityType) =>
+                  setTypeChoices((prev) => ({
+                    ...prev,
+                    [document.inputPath]: {
+                      ...prev[document.inputPath],
+                      [key]: entityType,
+                    },
                   }))
                 }
                 t={t}

@@ -280,6 +280,7 @@ it("carries an analysis back whole", async () => {
     id: sent().id,
     event: "result",
     status: "success",
+    language: "fr",
     units: [{ id: "content", location: "document", rewritable: true }],
     detections: [
       {
@@ -290,6 +291,7 @@ it("carries an analysis back whole", async () => {
         score: 0.85,
         text: "Marie Lefebvre",
         likely: true,
+        excerpt: "…signé par Marie Lefebvre le 3…",
       },
     ],
     notes: [],
@@ -345,16 +347,22 @@ it.each([
 
 it.each([
   {
+    language: "fr",
     units: [{ id: "content", location: "document" }],
     detections: [],
     notes: [],
   },
   {
+    language: "fr",
     units: [],
     detections: [{ unit_id: "content", start: 0, end: 1 }],
     notes: [],
   },
-  { units: [], detections: [], notes: ["note", 42] },
+  { language: "fr", units: [], detections: [], notes: ["note", 42] },
+  // The language the names were read in is not optional: the screen shows it
+  // so the user can correct it, and a blank there is a question they cannot
+  // answer.
+  { units: [], detections: [], notes: [] },
   { output_path: "/out/a.txt", notes: "xml_attributes_not_analyzed" },
 ])("validates an anonymization payload: %j", async (reply) => {
   const client = await SidecarClient.start();
@@ -378,6 +386,7 @@ it("reports progress for an analysis", async () => {
     id: sent().id,
     event: "result",
     status: "success",
+    language: "fr",
     units: [],
     detections: [],
     notes: [],

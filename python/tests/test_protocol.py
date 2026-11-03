@@ -201,6 +201,24 @@ class TestAnonymizationRequests:
     def test_analyze_still_needs_its_input(self):
         assert self.refused("analyze") == "invalid_path"
 
+    def test_analyze_takes_a_language_to_read_the_document_in(self):
+        """The review screen sends it back when the user corrects the guess."""
+        parsed = self.accepted("analyze", input_path="/tmp/dossier.txt", language="en")
+
+        assert parsed.language == "en"
+
+    def test_analyze_without_a_language_leaves_it_to_the_worker(self):
+        """Absent is not "French": the worker has to guess, and then say so."""
+        parsed = self.accepted("analyze", input_path="/tmp/dossier.txt")
+
+        assert parsed.language is None
+
+    def test_analyze_refuses_a_language_there_is_no_model_for(self):
+        assert (
+            self.refused("analyze", input_path="/tmp/dossier.txt", language="de")
+            == "invalid_request"
+        )
+
     def test_anonymize_carries_paths_payload_and_choices(self):
         parsed = self.accepted(
             "anonymize",
@@ -348,6 +366,36 @@ def test_analyze_then_anonymize_is_one_round_trip_each(tmp_path):
         == "Transmis à [PERSONNE 1].\n"
     )
     assert source.read_text(encoding="utf-8") == "Transmis à Marie Lefebvre.\n"
+
+
+def test_the_language_is_reported_and_can_be_overridden(tmp_path):
+    """
+    The guess travels back, and a correction travels in.
+
+    A document read by the wrong model is a document whose names are all
+    wrong, and the worker cannot tell: only the user sees that. So the guess
+    is shown rather than hidden, and the same request takes the answer.
+    """
+    source = tmp_path / "dossier.txt"
+    source.write_text("Le dossier de Marie Lefebvre est transféré.\n", encoding="utf-8")
+
+    guessed = messages(request("analyze", input_path=str(source)))[-1]
+    assert guessed["language"] == "fr"
+    assert "Marie Lefebvre" in [item["text"] for item in guessed["detections"]]
+
+    forced = messages(request("analyze", input_path=str(source), language="en"))[-1]
+    assert forced["language"] == "en"
+
+
+def test_a_detection_carries_the_text_around_it(tmp_path):
+    """The review screen asks about a value in context, not in isolation."""
+    source = tmp_path / "dossier.txt"
+    source.write_text("Réunion dans la salle Loire à 14 heures.\n", encoding="utf-8")
+
+    event = messages(request("analyze", input_path=str(source)))[-1]
+
+    assert event["detections"], event
+    assert all(item["excerpt"] for item in event["detections"])
 
 
 def test_a_document_the_anonymizer_cannot_rewrite_is_refused(tmp_path):

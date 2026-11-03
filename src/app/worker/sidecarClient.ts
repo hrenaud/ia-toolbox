@@ -17,7 +17,7 @@ export type WorkerRequest =
   | { operation: "list_formats" }
   | { operation: "list_anonymization_formats" }
   | { operation: "convert"; input_path: string; output_directory: string }
-  | { operation: "analyze"; input_path: string }
+  | { operation: "analyze"; input_path: string; language?: string }
   | {
       operation: "anonymize";
       input_path: string;
@@ -45,6 +45,12 @@ export interface Detection extends KeptDetection {
   score: number;
   text: string;
   /**
+   * The value with a few words either side, as the worker cut it. "Loire"
+   * alone is a question nobody can answer; "salle Loire — locaux de" is a
+   * room, and the review screen asks about the value in those words.
+   */
+  excerpt: string;
+  /**
    * False for the shape the model gets wrong most often — a lone capitalised
    * word opening a line. The review screen ranks those last.
    */
@@ -57,6 +63,8 @@ export type WorkerResult =
       id: string;
       event: "result";
       status: "success";
+      /** The language the names were read in, guessed unless the UI said so. */
+      language: string;
       units: AnalyzedUnit[];
       detections: Detection[];
       notes: string[];
@@ -123,6 +131,7 @@ function isWrittenFile(value: Record<string, unknown>): boolean {
 
 function isAnalysis(value: Record<string, unknown>): boolean {
   return (
+    typeof value.language === "string" &&
     Array.isArray(value.units) &&
     value.units.every(
       (unit) =>
@@ -141,7 +150,8 @@ function isAnalysis(value: Record<string, unknown>): boolean {
         typeof found.entity_type === "string" &&
         typeof found.score === "number" &&
         typeof found.text === "string" &&
-        typeof found.likely === "boolean",
+        typeof found.likely === "boolean" &&
+        typeof found.excerpt === "string",
     ) &&
     isCodeList(value.notes)
   );
@@ -208,7 +218,13 @@ function fieldsOf(request: WorkerRequest): Record<string, unknown> {
     case "list_anonymization_formats":
       return { operation: request.operation };
     case "analyze":
-      return { operation: request.operation, input_path: request.input_path };
+      // The language is omitted rather than defaulted: a user who has not
+      // corrected the guess has made no claim about the document.
+      return {
+        operation: request.operation,
+        input_path: request.input_path,
+        ...(request.language ? { language: request.language } : {}),
+      };
     case "convert":
       return {
         operation: request.operation,

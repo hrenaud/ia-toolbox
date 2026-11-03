@@ -1,18 +1,20 @@
 import { useState } from "react";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { fr } from "../../app/locales/fr";
 import type { AnalyzedUnit, Detection } from "../../app/worker/sidecarClient";
 import { ReviewList } from "./ReviewList";
-import { detectionKey } from "./review";
+import { detectionKey, valueKey } from "./review";
 
 /**
  * This list is the whole point of the two round trips: the user sees what was
- * found and decides, one item at a time or a type at a time. Nothing here may
- * speak in colour alone, and nothing the format cannot rewrite may be offered
- * as a choice — it is still shown, so the user knows it is there.
+ * found and decides. One row per value, the first occurrence in its context,
+ * and a type they can correct — a flat list of thirty decisions instead of the
+ * fifty repeated questions a ten-line document used to produce. Nothing here
+ * may speak in colour alone, and nothing the format cannot rewrite may be
+ * offered as a choice — it is still shown, so the user knows it is there.
  */
 
 function detection(fields: Partial<Detection> = {}): Detection {
@@ -24,6 +26,7 @@ function detection(fields: Partial<Detection> = {}): Detection {
     score: 0.9,
     text: "Jean Dupont",
     likely: true,
+    excerpt: "…dossier de Jean Dupont est transféré…",
     ...fields,
   };
 }
@@ -33,23 +36,31 @@ const units: AnalyzedUnit[] = [
   { id: "formulas", location: "sheet_formulas:Ventes", rewritable: false },
 ];
 
-/** Render with selection state owned outside, as the page owns it. */
+/** Render with selection and type choices owned outside, as the page owns them. */
 function Harness({
   detections,
   onChange = () => {},
+  onTypeChange = () => {},
 }: {
   detections: Detection[];
   onChange?: (next: Set<string>) => void;
+  onTypeChange?: (key: string, entityType: string) => void;
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [types, setTypes] = useState<Record<string, string>>({});
   return (
     <ReviewList
       detections={detections}
       units={units}
       selected={selected}
+      types={types}
       onSelectionChange={(next) => {
         setSelected(next);
         onChange(next);
+      }}
+      onTypeChange={(key, entityType) => {
+        setTypes((prev) => ({ ...prev, [key]: entityType }));
+        onTypeChange(key, entityType);
       }}
       t={fr}
     />
@@ -57,46 +68,57 @@ function Harness({
 }
 
 describe("ReviewList", () => {
-  it("says what was found, how sure it is, and where it is", () => {
+  it("says what was found, where it is, and what sits around it", () => {
     render(<Harness detections={[detection()]} />);
 
     const row = screen.getByRole("checkbox", { name: /Jean Dupont/ });
 
     expect(row).toHaveAccessibleName(
-      expect.stringContaining(fr["anonymization.entity.PERSON"]),
-    );
-    expect(row).toHaveAccessibleName(
-      expect.stringContaining(fr["anonymization.confidence.high"]),
-    );
-    expect(row).toHaveAccessibleName(
       expect.stringContaining(fr["anonymization.location.document_body"]),
     );
+    expect(
+      screen.getByText("…dossier de Jean Dupont est transféré…"),
+    ).toBeVisible();
   });
 
-  it("groups the detections under a translated type heading", () => {
+  /**
+   * The type is a proposal, not a verdict: two models reading one document
+   * disagreed about "Claire Dubois", and the user is the one who knows.
+   */
+  it("proposes a type the user can correct", async () => {
+    const onTypeChange = vi.fn();
+    const found = detection();
+    render(<Harness detections={[found]} onTypeChange={onTypeChange} />);
+
+    const select = screen.getByRole("combobox", { name: /Jean Dupont/ });
+    expect(select).toHaveValue("PERSON");
+
+    await userEvent.selectOptions(select, "ORGANIZATION");
+
+    expect(onTypeChange).toHaveBeenCalledWith(valueKey(found), "ORGANIZATION");
+    expect(select).toHaveValue("ORGANIZATION");
+  });
+
+  it("shows the type the page already holds for a value", () => {
+    const found = detection();
     render(
-      <Harness
-        detections={[
-          detection(),
-          detection({
-            entity_type: "EMAIL_ADDRESS",
-            start: 20,
-            end: 30,
-            text: "jean@ex.fr",
-          }),
-        ]}
+      <ReviewList
+        detections={[found]}
+        units={units}
+        selected={new Set()}
+        types={{ [valueKey(found)]: "LOCATION" }}
+        onSelectionChange={() => {}}
+        onTypeChange={() => {}}
+        t={fr}
       />,
     );
 
-    const groups = screen.getAllByRole("group");
-
-    expect(groups.map((group) => group.textContent)).toEqual([
-      expect.stringContaining(fr["anonymization.entity.PERSON"]),
-      expect.stringContaining(fr["anonymization.entity.EMAIL_ADDRESS"]),
-    ]);
+    expect(screen.getByRole("combobox", { name: /Jean Dupont/ })).toHaveValue(
+      "LOCATION",
+    );
   });
 
-  it("reports one detection to the page when it is ticked", async () => {
+  it("reports one value to the page when it is ticked", async () => {
     const onChange = vi.fn();
     const found = detection();
     render(<Harness detections={[found]} onChange={onChange} />);
@@ -108,49 +130,7 @@ describe("ReviewList", () => {
     expect(onChange).toHaveBeenCalledWith(new Set([detectionKey(found)]));
   });
 
-  it("selects every detection of one type at once", async () => {
-    const first = detection();
-    const second = detection({ start: 20, end: 25, text: "Marie" });
-    const other = detection({
-      entity_type: "EMAIL_ADDRESS",
-      start: 40,
-      end: 50,
-      text: "a@b.fr",
-    });
-    const onChange = vi.fn();
-    render(<Harness detections={[first, second, other]} onChange={onChange} />);
-
-    // Each type has its own bulk choice, so this one has to be the person
-    // group's: ticking it must leave the email address alone.
-    const people = screen.getByRole("group", {
-      name: new RegExp(fr["anonymization.entity.PERSON"]),
-    });
-    await userEvent.click(
-      within(people).getByRole("checkbox", {
-        name: new RegExp(fr["anonymization.selectGroup"]),
-      }),
-    );
-
-    expect(onChange).toHaveBeenCalledWith(
-      new Set([detectionKey(first), detectionKey(second)]),
-    );
-  });
-
-  it("unticks a whole type that was fully selected", async () => {
-    const first = detection();
-    const onChange = vi.fn();
-    render(<Harness detections={[first]} onChange={onChange} />);
-    const group = screen.getByRole("checkbox", {
-      name: new RegExp(fr["anonymization.selectGroup"]),
-    });
-
-    await userEvent.click(group);
-    await userEvent.click(group);
-
-    expect(onChange).toHaveBeenLastCalledWith(new Set());
-  });
-
-  it("asks once about a value found several times", () => {
+  it("asks once about a value found several times", async () => {
     const first = detection({ start: 0, end: 11 });
     const second = detection({ start: 40, end: 51 });
     const onChange = vi.fn();
@@ -159,12 +139,53 @@ describe("ReviewList", () => {
     const row = screen.getByRole("checkbox", { name: /Jean Dupont/ });
     expect(row).toHaveAccessibleName(expect.stringContaining("2"));
 
-    return userEvent.click(row).then(() => {
-      // One tick, both occurrences: they would get the same pseudonym anyway.
-      expect(onChange).toHaveBeenCalledWith(
-        new Set([detectionKey(first), detectionKey(second)]),
-      );
-    });
+    await userEvent.click(row);
+
+    // One tick, both occurrences: they would get the same pseudonym anyway.
+    expect(onChange).toHaveBeenCalledWith(
+      new Set([detectionKey(first), detectionKey(second)]),
+    );
+  });
+
+  it("asks once about a value two models typed differently", () => {
+    render(
+      <Harness
+        detections={[
+          detection({ text: "Claire Dubois", start: 0, end: 13 }),
+          detection({
+            text: "Claire Dubois",
+            start: 40,
+            end: 53,
+            entity_type: "ORGANIZATION",
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getAllByRole("checkbox")).toHaveLength(1);
+  });
+
+  /** A word that is always the same word tells the user nothing. */
+  it("claims no confidence about a name the model only guessed", () => {
+    render(<Harness detections={[detection()]} />);
+
+    expect(screen.queryByText(/Certitude/)).toBeNull();
+  });
+
+  it("says how sure it is about a value a pattern decided", () => {
+    render(
+      <Harness
+        detections={[
+          detection({
+            entity_type: "PHONE_NUMBER",
+            text: "06 12 34 56 78",
+            score: 0.4,
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText(/Certitude faible/)).toBeVisible();
   });
 
   it("puts the values the model is least sure of below the rest", () => {
@@ -177,10 +198,7 @@ describe("ReviewList", () => {
       />,
     );
 
-    const people = screen.getByRole("group", {
-      name: new RegExp(fr["anonymization.entity.PERSON"]),
-    });
-    const rows = within(people)
+    const rows = screen
       .getAllByRole("checkbox")
       .map((box) => box.closest("li")?.textContent ?? "");
 
@@ -201,19 +219,11 @@ describe("ReviewList", () => {
       />,
     );
 
-    expect(screen.getByText(/Jean Dupont/)).toBeInTheDocument();
+    expect(screen.getByText("Jean Dupont")).toBeInTheDocument();
     expect(screen.getByText(fr["anonymization.notRewritable"])).toBeVisible();
     expect(screen.queryByRole("checkbox", { name: /Jean Dupont/ })).toBeNull();
-  });
-
-  it("offers no bulk choice for a type that is only reported", () => {
-    render(<Harness detections={[detection({ unit_id: "formulas" })]} />);
-
-    expect(
-      screen.queryByRole("checkbox", {
-        name: new RegExp(fr["anonymization.selectGroup"]),
-      }),
-    ).toBeNull();
+    // Nor is its type worth correcting: the choice would change nothing.
+    expect(screen.queryByRole("combobox")).toBeNull();
   });
 
   it("names the place a detection sits in, detail included", () => {
@@ -229,6 +239,6 @@ describe("ReviewList", () => {
   it("shows nothing at all when the documents were clean", () => {
     render(<Harness detections={[]} />);
 
-    expect(screen.queryAllByRole("group")).toHaveLength(0);
+    expect(screen.queryAllByRole("listitem")).toHaveLength(0);
   });
 });

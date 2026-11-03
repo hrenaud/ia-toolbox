@@ -149,7 +149,12 @@ export const fr: Record<keyof typeof en, string> = {
   "anonymization.nothingFound":
     "Aucune information personnelle n’a été trouvée dans ces documents.",
   "anonymization.kept": "{count} élément(s) sélectionné(s) sur {total}",
-  "anonymization.selectGroup": "Tout sélectionner pour ce type",
+  "anonymization.typeOf": "Type de « {value} »",
+  "anonymization.language": "Langue du document",
+  "anonymization.language.fr": "Français",
+  "anonymization.language.en": "Anglais",
+  "anonymization.languageHelp":
+    "Les noms sont lus dans cette langue. Si elle est fausse, corrigez-la : le document est relu et vos choix sont remis à zéro.",
   "anonymization.selectAll": "Tout sélectionner",
   "anonymization.clearAll": "Ne rien sélectionner",
   "anonymization.occurrences": "{count} fois dans le document",

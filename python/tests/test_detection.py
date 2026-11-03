@@ -197,6 +197,242 @@ class TestANameCarriesACapital:
         assert detection.name_span(text, 0, len(text)) == (13, 19)
 
 
+class TestTheExcerptAroundAValue:
+    """What the review screen shows so a decision can be made at all.
+
+    "Loire" alone is unanswerable; "salle Loire — locaux de" is a room. A few
+    words either side is what turns a list of values into a list of questions
+    someone can actually answer.
+    """
+
+    def test_a_few_words_on_each_side(self):
+        text = "Le dossier de Sophie Marchand est transféré à Rennes."
+
+        assert detection.excerpt(text, 14, 29) == text
+
+    def test_the_value_is_marked_inside_the_excerpt(self):
+        text = "Le dossier de Sophie Marchand est transféré à Rennes."
+
+        found = detection.excerpt(text, 14, 29)
+
+        assert "Sophie Marchand" in found
+
+    def test_a_long_line_is_cut_on_both_sides(self):
+        text = f"{'mot ' * 30}Nantes{' mot' * 30}"
+        start = text.index("Nantes")
+
+        found = detection.excerpt(text, start, start + 6)
+
+        assert found.startswith("…")
+        assert found.endswith("…")
+        assert "Nantes" in found
+        assert len(found) < 100
+
+    def test_the_cut_falls_between_words(self):
+        """A half word reads as a typo and makes the excerpt harder to scan."""
+        text = f"{'alpha ' * 20}Nantes{' omega' * 20}"
+        start = text.index("Nantes")
+
+        found = detection.excerpt(text, start, start + 6).strip("… ")
+
+        assert found.startswith("alpha")
+        assert found.endswith("omega")
+
+    def test_a_line_break_is_shown_as_a_space(self):
+        """The excerpt is one line in the review list, whatever it came from."""
+        text = "Rédigé par :\nClaire Dubois\nParticipants"
+        start = text.index("Claire")
+
+        found = detection.excerpt(text, start, start + 13)
+
+        assert "\n" not in found
+
+    def test_every_detection_carries_one(self):
+        found = detection.detect([unit("Le dossier de Sophie Marchand.")])
+
+        assert all(item.excerpt for item in found)
+
+
+class TestGuessingTheLanguage:
+    """Which model reads the names, decided from the text itself.
+
+    Running both models over one document was measured as the main source of
+    noise: the English model on a French report is what returned "Claire
+    Dubois" as an organization and a postcode as a date. The grammar words of
+    each language are the cheapest signal that separates them, and spaCy
+    already ships both lists.
+    """
+
+    def test_a_french_document(self):
+        text = "Le dossier de Sophie Marchand est transféré à l'antenne de Rennes."
+
+        assert detection.guess_language(text) == "fr"
+
+    def test_an_english_document(self):
+        text = "The file of Sophie Marchand was transferred to the Rennes office."
+
+        assert detection.guess_language(text) == "en"
+
+    def test_a_short_french_line(self):
+        assert detection.guess_language("Facture de Jean Dupont") == "fr"
+
+    def test_a_short_english_line(self):
+        assert detection.guess_language("Invoice for John Smith") == "en"
+
+    def test_a_text_with_no_grammar_at_all_falls_back_to_french(self):
+        """A list of names says nothing; the default is the app's audience."""
+        assert detection.guess_language("Dupont\nMartin\nDurand") == "fr"
+
+
+class TestOnlyOneModelReadsTheNames:
+    """Names come from one language; patterns come from both.
+
+    An IBAN and a credit card are decided by a check digit, not by grammar,
+    and Presidio ships no French credit card recognizer — so the pattern
+    recognizers have to keep running in both languages. The models that guess
+    at names are the ones that must not.
+    """
+
+    def test_the_other_model_does_not_contribute_names(self):
+        text = "The file of Sophie Marchand was transferred to the Rennes office."
+
+        found = detection.detect([unit(text)], language="fr")
+
+        assert typed(found, "PERSON") == []
+
+    def test_the_document_language_still_finds_its_names(self):
+        text = "The file of Sophie Marchand was transferred to the Rennes office."
+
+        found = detection.detect([unit(text)], language="en")
+
+        assert "Sophie Marchand" in [item.text for item in found]
+
+    def test_a_credit_card_is_found_whatever_the_language(self):
+        text = "La carte 4111 1111 1111 1111 est résiliée."
+
+        found = detection.detect([unit(text)], language="fr")
+
+        assert typed(found, "CREDIT_CARD") != []
+
+
+class TestAnAddressIsOneValue:
+    """A postal address is one piece of personal data, not three.
+
+    The model returns the street, the postcode and the town separately, and
+    the house number not at all. Replacing each part on its own leaves "12
+    [LIEU 3], [DATE 4] [LIEU 5]" in the copy: the number survives and the
+    shape of the address is still legible. The pieces have to become one span,
+    number included, before the user is ever asked about them.
+    """
+
+    def spans(self, text: str) -> list[tuple[str, str]]:
+        found = detection.detect([unit(text)])
+        return [(item.entity_type, item.text) for item in found]
+
+    def test_street_postcode_and_town_become_one_location(self):
+        text = "Son adresse est le 12 rue des Lilas, 44000 Nantes."
+
+        assert ("LOCATION", "12 rue des Lilas, 44000 Nantes") in self.spans(text)
+
+    def test_the_house_number_is_part_of_it(self):
+        text = "Son adresse est le 12 rue des Lilas, 44000 Nantes."
+        found = detection.detect([unit(text)])
+        address = next(item for item in found if "Lilas" in item.text)
+
+        assert text[address.start : address.end].startswith("12 ")
+
+    def test_a_bare_town_is_left_alone(self):
+        text = "La réunion a eu lieu à Nantes le 14 mars."
+
+        assert ("LOCATION", "Nantes") in self.spans(text)
+
+    def test_two_towns_in_a_list_are_not_merged(self):
+        """No postcode and no house number: nothing says this is an address."""
+        found = detection.merge_addresses(
+            [
+                Detection("c", 0, 6, "LOCATION", 0.85, "Nantes"),
+                Detection("c", 8, 14, "LOCATION", 0.85, "Rennes"),
+            ],
+            {"c": "Nantes, Rennes"},
+        )
+
+        assert [item.text for item in found] == ["Nantes", "Rennes"]
+
+    def test_a_postcode_anchors_the_merge(self):
+        found = detection.merge_addresses(
+            [Detection("c", 7, 13, "LOCATION", 0.85, "Nantes")],
+            {"c": "44000, Nantes"},
+        )
+
+        assert [item.text for item in found] == ["44000, Nantes"]
+
+    def test_the_merged_span_is_a_location(self):
+        found = detection.merge_addresses(
+            [
+                Detection("c", 3, 16, "LOCATION", 0.85, "rue des Lilas"),
+                Detection("c", 18, 23, "DATE_TIME", 0.85, "44000"),
+            ],
+            {"c": "12 rue des Lilas, 44000"},
+        )
+
+        assert [(item.entity_type, item.text) for item in found] == [
+            ("LOCATION", "12 rue des Lilas, 44000")
+        ]
+
+    def test_a_line_break_stops_the_merge(self):
+        """A span across a block boundary empties the block when rewritten."""
+        found = detection.merge_addresses(
+            [Detection("c", 13, 17, "LOCATION", 0.85, "Lieu")],
+            {"c": "14 mars 2026\nLieu"},
+        )
+
+        assert [item.text for item in found] == ["Lieu"]
+
+    def test_a_word_between_two_places_stops_the_merge(self):
+        found = detection.merge_addresses(
+            [
+                Detection("c", 3, 16, "LOCATION", 0.85, "rue des Lilas"),
+                Detection("c", 24, 30, "LOCATION", 0.85, "Nantes"),
+            ],
+            {"c": "12 rue des Lilas et aussi Nantes"},
+        )
+
+        assert len(found) == 2
+
+
+class TestAFunctionWordIsNotAName:
+    """ "Le" opening a sentence is an article, not an organization.
+
+    The model tags the first capitalised token of a segment, and in French
+    that token is very often "Le", "La" or "Les". No judgement is needed to
+    rule those out, and spaCy already ships the list of them, so the one
+    decision left is the acronym: "LE" in capitals can be a brand.
+    """
+
+    def test_a_capitalised_article_is_not_a_name(self):
+        assert detection.is_function_word("Le") is True
+
+    def test_an_english_function_word_is_not_a_name_either(self):
+        assert detection.is_function_word("The") is True
+
+    def test_an_ordinary_word_is_left_to_the_ranking(self):
+        assert detection.is_function_word("Participants") is False
+
+    def test_a_real_name_is_never_a_function_word(self):
+        assert detection.is_function_word("Nantes") is False
+
+    def test_an_acronym_survives(self):
+        assert detection.is_function_word("LE") is False
+
+    def test_several_words_are_never_a_function_word(self):
+        assert detection.is_function_word("Le Mans") is False
+
+    def test_the_article_is_not_reported(self):
+        found = detect("Décisions\n\nLe dossier est transféré.")
+
+        assert "Le" not in [item.text for item in found]
+
+
 class TestLessLikelyNames:
     """A lone capitalised word opening a line is where the model guesses.
 

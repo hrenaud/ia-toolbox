@@ -142,7 +142,12 @@ export const en = {
   "anonymization.nothingFound":
     "No personal information was found in these documents.",
   "anonymization.kept": "{count} of {total} selected",
-  "anonymization.selectGroup": "Select everything of this type",
+  "anonymization.typeOf": "Type of “{value}”",
+  "anonymization.language": "Document language",
+  "anonymization.language.fr": "French",
+  "anonymization.language.en": "English",
+  "anonymization.languageHelp":
+    "Names are read in this language. If it is wrong, correct it: the document is read again and your choices are cleared.",
   "anonymization.selectAll": "Select everything",
   "anonymization.clearAll": "Select nothing",
   "anonymization.occurrences": "{count} times in the document",

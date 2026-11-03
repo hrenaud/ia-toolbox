@@ -20,6 +20,21 @@ export const ENTITY_TYPES = [
   "DATE_TIME",
 ] as const;
 
+/**
+ * The types a language model guesses at, mirroring `_MODEL_TYPES` in the
+ * worker's `detection.py`. Everything else is decided by a pattern, often by a
+ * check digit, which is what makes its score worth reporting.
+ */
+export const MODEL_TYPES = [
+  "PERSON",
+  "ORGANIZATION",
+  "LOCATION",
+  "DATE_TIME",
+] as const;
+
+/** The languages the worker has a model for, mirroring its `LANGUAGES`. */
+export const DOCUMENT_LANGUAGES = ["fr", "en"] as const;
+
 /** Failures the anonymization pipeline reports, keyed for translation. */
 export const PIPELINE_ERROR_CODES = [
   "input_not_found",
@@ -41,15 +56,18 @@ export const NOTE_CODES = [
   "xlsx_shared_strings_reused",
 ] as const;
 
-export interface EntityGroup {
-  entityType: string;
-  detections: Detection[];
-}
-
-/** One value, and every place it was found. */
+/** One value, every place it was found, and the type proposed for it. */
 export interface ValueRow {
   /** The first spelling seen, which is what the row shows. */
   text: string;
+  /**
+   * The type the worker proposed, which the user may override. It comes from
+   * the first occurrence: two models disagreeing about one value is exactly
+   * what the override exists for.
+   */
+  entityType: string;
+  /** The first occurrence in its context, as the worker cut it. */
+  excerpt: string;
   detections: Detection[];
   likely: boolean;
 }
@@ -74,25 +92,18 @@ export function confidenceWord(score: number): "high" | "medium" | "low" {
 }
 
 /**
- * Group detections by type, in the worker's order, unknown types last.
+ * Whether a score is worth showing at all for this type.
  *
- * Grouping is what makes bulk selection meaningful — "every email address" is
- * a decision a user can make, "detection 14" is not.
+ * Every type the model guesses at scores exactly 0.85, so "high confidence"
+ * was printed on every name, organization and place — the three types the user
+ * has to check one by one. A word that never changes is not information, and
+ * here it contradicted what the user was seeing. For the types a pattern
+ * decides, the score still varies and still means something: a verified check
+ * digit scores 1, a bare run of digits that looks like a phone number scores
+ * much lower.
  */
-export function groupByEntity(detections: Detection[]): EntityGroup[] {
-  const groups = new Map<string, Detection[]>();
-  for (const detection of detections) {
-    const found = groups.get(detection.entity_type);
-    if (found) found.push(detection);
-    else groups.set(detection.entity_type, [detection]);
-  }
-  const rank = (type: string) => {
-    const index = ENTITY_TYPES.indexOf(type as (typeof ENTITY_TYPES)[number]);
-    return index === -1 ? ENTITY_TYPES.length : index;
-  };
-  return [...groups.entries()]
-    .map(([entityType, found]) => ({ entityType, detections: found }))
-    .sort((a, b) => rank(a.entityType) - rank(b.entityType));
+export function showsConfidence(entityType: string): boolean {
+  return !MODEL_TYPES.includes(entityType as (typeof MODEL_TYPES)[number]);
 }
 
 /**
@@ -100,13 +111,19 @@ export function groupByEntity(detections: Detection[]): EntityGroup[] {
  *
  * The same name found eight times is one decision, not eight: each occurrence
  * already gets the same pseudonym, so asking about each one asks the same
- * question again. Two spellings of one value are one row for the same reason —
- * the worker assigns its labels case-insensitively, so showing them apart
- * would promise a distinction the output does not make.
+ * question again, and a ten-line document was producing fifty rows. Two
+ * spellings of one value are one row for the same reason — the worker assigns
+ * its labels case-insensitively.
+ *
+ * The type is not part of the key either. Two models reading one document
+ * returned "Claire Dubois" as a person and as an organization, and the screen
+ * asked about her twice, under two headings, both times claiming to be sure.
+ * One value is one question; the type is a proposal the user can correct.
  *
  * A value is ranked low only when every occurrence of it is: found once in the
  * middle of a sentence, it is a real value that also happens to open a line
- * somewhere else.
+ * somewhere else. Below that, rows keep the worker's type order, so the rows
+ * that ask the same kind of question sit together.
  */
 export function groupByValue(detections: Detection[]): ValueRow[] {
   const rows = new Map<string, ValueRow>();
@@ -119,22 +136,37 @@ export function groupByValue(detections: Detection[]): ValueRow[] {
     } else {
       rows.set(key, {
         text: detection.text,
+        entityType: detection.entity_type,
+        excerpt: detection.excerpt,
         detections: [detection],
         likely: detection.likely,
       });
     }
   }
-  return [...rows.values()].sort((a, b) => Number(b.likely) - Number(a.likely));
+  return [...rows.values()].sort(
+    (a, b) =>
+      Number(b.likely) - Number(a.likely) ||
+      typeRank(a.entityType) - typeRank(b.entityType),
+  );
 }
 
 /**
- * The row a detection belongs to: one type, one value, case ignored.
+ * The row a detection belongs to: one value, case ignored, type ignored.
  *
- * The page counts rows with this, so that the count it announces and the rows
- * the user reads are the same thing.
+ * The page counts rows with this and holds the user's type choices under it,
+ * so the count it announces, the rows the user reads and the type they pick are
+ * all the same thing.
  */
 export function valueKey(detection: Detection): string {
-  return `${detection.entity_type}|${detection.text.trim().toLocaleLowerCase()}`;
+  return detection.text.trim().toLocaleLowerCase();
+}
+
+/** Where a type sits in the worker's order; a type we do not know goes last. */
+function typeRank(entityType: string): number {
+  const index = ENTITY_TYPES.indexOf(
+    entityType as (typeof ENTITY_TYPES)[number],
+  );
+  return index === -1 ? ENTITY_TYPES.length : index;
 }
 
 /**
