@@ -197,6 +197,71 @@ class TestANameCarriesACapital:
         assert detection.name_span(text, 0, len(text)) == (13, 19)
 
 
+class TestAFirstNameTakesTheSurnameAfterIt:
+    """
+    The model sometimes stops at the first name, and half a name is a leak.
+
+    On the sample report, "relire avec Sophie Marchand" came back as "Sophie"
+    alone: the copy kept the surname and the review screen never offered it.
+    The missing word is right there, capitalised and next to the name, so a
+    detection of one word takes the capitalised word that follows it.
+
+    One word only, and only onto a span that is one word: that is the shape of
+    the failure. A stop word is not a surname, and a span the model already
+    read as two words is a name it read whole.
+    """
+
+    def span(self, text: str, start: int, end: int) -> str:
+        return text[start : detection.surname_end(text, start, end)]
+
+    def test_the_capitalised_word_after_a_first_name_joins_it(self):
+        text = "relire avec Sophie Marchand avant diffusion"
+
+        assert self.span(text, 12, 18) == "Sophie Marchand"
+
+    def test_a_hyphenated_surname_is_taken_whole(self):
+        text = "relire avec Sophie Marchand-Dupuis avant diffusion"
+
+        assert self.span(text, 12, 18) == "Sophie Marchand-Dupuis"
+
+    def test_an_ordinary_word_after_a_name_is_left_out(self):
+        """Nothing follows a name here: the next word has no capital."""
+        text = "Sophie arrive demain"
+
+        assert self.span(text, 0, 6) == "Sophie"
+
+    def test_a_capitalised_stop_word_is_not_a_surname(self):
+        text = "Sophie Le contacte"
+
+        assert self.span(text, 0, 6) == "Sophie"
+
+    def test_punctuation_stops_the_extension(self):
+        """A full stop between two words means the capital opens a sentence."""
+        text = "J'ai vu Sophie. Marchand a relu."
+
+        assert self.span(text, 8, 14) == "Sophie"
+
+    def test_a_name_the_model_read_whole_is_left_alone(self):
+        text = "Claire Dubois Nantes"
+
+        assert self.span(text, 0, 13) == "Claire Dubois"
+
+    def test_only_one_word_is_taken(self):
+        """A title after a full name would otherwise be swallowed too."""
+        text = "Sophie Marchand Directrice"
+
+        assert self.span(text, 0, 6) == "Sophie Marchand"
+
+    def test_a_name_at_the_end_of_the_text_is_not_an_error(self):
+        assert self.span("Sophie", 0, 6) == "Sophie"
+
+    def test_the_surname_is_reported_with_the_first_name(self):
+        """The whole point: what the review screen offers is the full name."""
+        found = typed(detect("Note interne : relire avec Sophie Marchand."), "PERSON")
+
+        assert "Sophie Marchand" in [item.text for item in found]
+
+
 class TestTheExcerptAroundAValue:
     """What the review screen shows so a decision can be made at all.
 

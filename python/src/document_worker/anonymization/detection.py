@@ -70,6 +70,12 @@ _EDGE = ' \t\n\r\xa0.,;:!?()[]{}"«»…'
 # belongs to no language.
 _WORD = re.compile(r"[a-z\xe0-\xff']+")
 
+# The word after a name: one space, then a word. Hyphens and apostrophes are
+# part of it, because "Marchand-Dupuis" and "O'Connor" are one surname. Whether
+# it carries a capital is checked on the match, where "É" and "E" are the same
+# question; a character class would have to spell out an alphabet.
+_SURNAME = re.compile(r" (\w[\w'’-]*)")
+
 # How much text to show on each side of a value in the review screen. A few
 # words: enough to tell a street from a town, short enough that thirty of them
 # stay scannable.
@@ -466,6 +472,8 @@ def _analyze(unit: TextUnit, language: str, names: bool) -> list[Detection]:
                 start, end = name_span(unit.text, start, end)
                 if start == end:
                     continue
+            if result.entity_type == "PERSON":
+                end = surname_end(unit.text, start, end)
             if result.entity_type in _NAME_TYPES and is_function_word(
                 unit.text[start:end]
             ):
@@ -553,6 +561,38 @@ def name_span(text: str, start: int, end: int) -> tuple[int, int]:
         while start < end and text[start] == " ":
             start += 1
     return start, end
+
+
+def surname_end(text: str, start: int, end: int) -> int:
+    """
+    Widen a one-word name onto the capitalised word that follows it.
+
+    The model stops at the first name often enough to matter — "relire avec
+    Sophie Marchand" came back as "Sophie" — and half a name is a leak: the
+    surname stayed in the anonymized copy and was never offered for review.
+    The missing word is capitalised and sits right after the span, so it can be
+    taken back without asking the model again.
+
+    The three limits are what keep this from swallowing ordinary words. Only a
+    span of one word is widened, since that is the failure's shape and a span
+    the model read as two words is a name it read whole. Only one word is
+    taken, so a job title after a full name stays out. And only a word directly
+    after a single space, so a capital opening the next sentence stays out too.
+
+    Arguments:
+        text: The unit's text, which the offsets index into.
+        start: Where the span starts.
+        end: Where it ends, exclusive.
+
+    Returns:
+        The new end, unchanged when there is no surname to take.
+    """
+    if " " in text[start:end]:
+        return end
+    match = _SURNAME.match(text, end)
+    if not match or not match[1][:1].isupper() or is_function_word(match[1]):
+        return end
+    return match.end()
 
 
 def is_likely(text: str, start: int, end: int, entity_type: str) -> bool:

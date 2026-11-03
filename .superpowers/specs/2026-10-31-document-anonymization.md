@@ -625,7 +625,7 @@ the suite would then test the plumbing while the recorded figures describe the
 shipped model — but it is no longer a post-install download.
 
 **Precision measured, and left as it is.** On the French meeting-report fixture
-the detector reports 43 spans, which the review screen collapses into 34 rows,
+the detector reports 43 spans, which the review screen collapses into 33 rows,
 2 of them ranked doubtful: `Annexe` and `Prochaine` — section headings, both
 below the fold. Before these rules the same document produced about fifty rows
 with the noise mixed into them. A POS filter was prototyped —
@@ -659,7 +659,7 @@ address on the one value a reader would most want gone. Forty-four megabytes for
 two rows and a recall loss is not a trade worth shipping, so the two small
 models stay.
 
-**What the noise cost is paid with instead.** Six rules, only the first of
+**What the noise cost is paid with instead.** Seven rules, only the first of
 which drops anything:
 
 - The model reads one line at a time; the patterns keep the whole unit. A unit's
@@ -679,6 +679,18 @@ numéro de sécurité` — held no name to begin with and is dropped. `LOCATION`
   excluded from this: an address is lowercase and still personal data, and
   cutting `rue des Lilas` to `Lilas` would leave the street in the copy. This
   rule subsumes the older list of leading particles, which is deleted.
+- A one-word `PERSON` takes the capitalised word after it. The model stops at
+  the first name often enough to matter: in `relire avec Sophie Marchand` it
+  returns `Sophie` alone, so the surname stayed in the copy and was never
+  offered — half a name is a leak. Three limits keep it from swallowing
+  ordinary words: only a span of one word is widened, since a span read as two
+  is a name read whole; only one word is taken, so `Sophie Marchand
+Directrice` stops at the name; and only a word after a single space, so a
+  capital opening the next sentence is out, as is a stop word — `Sophie Le
+contacte` is not a surname. The POS tags would answer this more precisely —
+  the model does tag `Marchand` as `PROPN` — but reading them means threading
+  pre-computed `nlp_artifacts` through the per-line pass, and the capital and
+  the stop-word list are already here.
 - `Detection.likely` is false for the shape the model gets wrong most often: a
   lone capitalised word opening a line. It is reported all the same — a one-word
   name in a table cell has that exact shape — but the review screen ranks it

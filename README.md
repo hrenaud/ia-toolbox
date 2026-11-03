@@ -114,12 +114,18 @@ than a verdict, because the detector does get it wrong and you are the one who k
 is a person or a firm. And the shape the detector gets wrong most often — a lone capitalised word
 opening a line or a heading — is ranked under a **Less likely** heading at the bottom rather than
 dropped, because a one-word name in a table cell looks exactly the same. On the sample meeting
-report, that turns forty-three spans into thirty-four questions, two of them doubtful and grouped at
-the end.
+report, that turns forty-three spans into thirty-three questions, two of them doubtful and grouped
+at the end.
 
 Names are read one line at a time, not over the whole document. A document is not prose: a heading,
 a paragraph and a table row carry no full stop between them, and a model given all of it at once
 reads one run-on sentence — it loses names in the middle of it and takes the headings for people.
+
+A name the model stopped halfway through is completed. It sometimes tags the first name and leaves
+the surname out, and half a name is a leak: the rest stayed in the copy and was never offered for
+review. So a detection of a single word takes the capitalised word right after it — one word only,
+never onto a name already read as two, and never across punctuation, so a job title or a capital
+opening the next sentence stays out.
 
 French dates come from a pattern rather than from the model, which has no date category for French.
 The pattern is anchored on the twelve month names, so `2 avril 2026`, `juin 2026` and `18/04/2026`
