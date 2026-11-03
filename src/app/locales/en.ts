@@ -145,6 +145,10 @@ export const en = {
   "anonymization.selectGroup": "Select everything of this type",
   "anonymization.selectAll": "Select everything",
   "anonymization.clearAll": "Select nothing",
+  "anonymization.occurrences": "{count} times in the document",
+  "anonymization.lessLikely": "Less likely",
+  "anonymization.lessLikelyHelp":
+    "One word, opening a line or a heading: often an ordinary word the detector took for a name. Check before ticking.",
   "anonymization.notRewritable": "Shown only",
   "anonymization.notRewritableHelp":
     "This text cannot be rewritten in this format without breaking the document, so it is shown and left as it is.",

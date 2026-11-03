@@ -44,6 +44,11 @@ export interface AnalyzedUnit {
 export interface Detection extends KeptDetection {
   score: number;
   text: string;
+  /**
+   * False for the shape the model gets wrong most often — a lone capitalised
+   * word opening a line. The review screen ranks those last.
+   */
+  likely: boolean;
 }
 
 export type WorkerResult =
@@ -135,7 +140,8 @@ function isAnalysis(value: Record<string, unknown>): boolean {
         isOffset(found.end) &&
         typeof found.entity_type === "string" &&
         typeof found.score === "number" &&
-        typeof found.text === "string",
+        typeof found.text === "string" &&
+        typeof found.likely === "boolean",
     ) &&
     isCodeList(value.notes)
   );

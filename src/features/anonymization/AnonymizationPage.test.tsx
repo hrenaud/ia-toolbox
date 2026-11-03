@@ -37,6 +37,7 @@ function analyzed(fields: Partial<AnalyzedDocument> = {}): AnalyzedDocument {
         entity_type: "PERSON",
         score: 0.9,
         text: "Jean Dupont",
+        likely: true,
       },
     ],
     notes: [],
@@ -196,6 +197,46 @@ describe("reviewing what was found", () => {
     expect(status()).toHaveTextContent("1 élément(s) sélectionné(s) sur 1");
   });
 
+  /**
+   * The list asks once per value, so the count has to say the same thing. A
+   * name found twice that announced "2 sur 2" after one tick would be counting
+   * something the user cannot see.
+   */
+  it("counts the values it asks about, not their occurrences", async () => {
+    await reachReview([
+      analyzed({
+        detections: [
+          {
+            unit_id: "content",
+            start: 0,
+            end: 11,
+            entity_type: "PERSON",
+            score: 0.9,
+            text: "Jean Dupont",
+            likely: true,
+          },
+          {
+            unit_id: "content",
+            start: 20,
+            end: 31,
+            entity_type: "PERSON",
+            score: 0.9,
+            text: "Jean Dupont",
+            likely: true,
+          },
+        ],
+      }),
+    ]);
+
+    expect(status()).toHaveTextContent("0 élément(s) sélectionné(s) sur 1");
+
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: /Jean Dupont/ }),
+    );
+
+    expect(status()).toHaveTextContent("1 élément(s) sélectionné(s) sur 1");
+  });
+
   it("selects everything in every document at once", async () => {
     await reachReview([
       analyzed(),
@@ -209,6 +250,7 @@ describe("reviewing what was found", () => {
             entity_type: "EMAIL_ADDRESS",
             score: 1,
             text: "a@b.fr",
+            likely: true,
           },
         ],
       }),

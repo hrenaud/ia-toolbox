@@ -40,7 +40,17 @@ class TextUnit:
 
 @dataclass(frozen=True)
 class Detection:
-    """One span of personal data found in one unit."""
+    """
+    One span of personal data found in one unit.
+
+    Attributes:
+        likely: False for a detection whose shape is the one the model gets
+            wrong most often — a lone capitalised word opening a line. The
+            review screen ranks those below the rest instead of dropping them,
+            because the same shape is what a one-word name in a table cell
+            looks like. ``score`` is the detector's own confidence and answers
+            a different question; this one is ours.
+    """
 
     unit_id: str
     start: int
@@ -48,6 +58,7 @@ class Detection:
     entity_type: str
     score: float
     text: str
+    likely: bool = True
 
 
 @dataclass(frozen=True)

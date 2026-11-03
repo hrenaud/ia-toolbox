@@ -116,6 +116,7 @@ def process_anonymization(request):
                         "entity_type": found.entity_type,
                         "score": found.score,
                         "text": found.text,
+                        "likely": found.likely,
                     }
                     for found in analysis.detections
                 ],

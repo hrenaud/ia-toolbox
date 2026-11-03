@@ -127,6 +127,14 @@
   display: block;
 }
 
+/* The heading that separates the doubtful values from the rest. Its words say
+   what it means; the rule above it only makes the break easier to see. */
+.review-less-likely {
+  border-top: 1px solid var(--border);
+  margin: var(--space-3) 0 0;
+  padding-top: var(--space-2);
+}
+
 .document-notes {
   margin-top: var(--space-3);
 }

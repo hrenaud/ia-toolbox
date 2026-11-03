@@ -289,6 +289,7 @@ it("carries an analysis back whole", async () => {
         entity_type: "PERSON",
         score: 0.85,
         text: "Marie Lefebvre",
+        likely: true,
       },
     ],
     notes: [],

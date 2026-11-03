@@ -152,6 +152,10 @@ export const fr: Record<keyof typeof en, string> = {
   "anonymization.selectGroup": "Tout sélectionner pour ce type",
   "anonymization.selectAll": "Tout sélectionner",
   "anonymization.clearAll": "Ne rien sélectionner",
+  "anonymization.occurrences": "{count} fois dans le document",
+  "anonymization.lessLikely": "Moins probables",
+  "anonymization.lessLikelyHelp":
+    "Un seul mot, en début de ligne ou de titre : c’est souvent un mot ordinaire que le détecteur a pris pour un nom. Vérifiez avant de cocher.",
   "anonymization.notRewritable": "Signalé seulement",
   "anonymization.notRewritableHelp":
     "Ce texte ne peut pas être réécrit dans ce format sans abîmer le document : il est signalé et laissé tel quel.",

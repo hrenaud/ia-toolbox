@@ -15,6 +15,7 @@ import {
   describeAnonymizationError,
   detectionKey,
   isSelectable,
+  valueKey,
 } from "./review";
 import "./AnonymizationPage.css";
 
@@ -194,14 +195,36 @@ export function AnonymizationPage({ locale }: AnonymizationPageProps) {
       .filter((detection) => isSelectable(detection, document.units))
       .map(detectionKey);
 
+  /**
+   * The rows the review screen offers, each with the keys it stands for.
+   *
+   * The list asks once per value, so the count has to be counted the same way:
+   * one name found eight times is one row, one decision, and one unit here.
+   */
+  const offeredRows = (document: AnalyzedDocument): string[][] => {
+    const rows = new Map<string, string[]>();
+    for (const detection of document.detections) {
+      if (!isSelectable(detection, document.units)) continue;
+      const key = valueKey(detection);
+      rows.set(key, [...(rows.get(key) ?? []), detectionKey(detection)]);
+    }
+    return [...rows.values()];
+  };
+
   const total = documents.reduce(
-    (count, document) => count + selectableKeys(document).length,
+    (count, document) => count + offeredRows(document).length,
     0,
   );
-  const kept = Object.values(selection).reduce(
-    (count, keys) => count + keys.size,
-    0,
-  );
+  const kept = documents.reduce((count, document) => {
+    const chosen = selection[document.inputPath];
+    if (!chosen) return count;
+    return (
+      count +
+      offeredRows(document).filter((keys) =>
+        keys.some((key) => chosen.has(key)),
+      ).length
+    );
+  }, 0);
 
   const setAll = (select: boolean) => {
     const next: Selection = {};

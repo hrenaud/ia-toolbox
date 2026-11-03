@@ -23,6 +23,7 @@ function detection(fields: Partial<Detection> = {}): Detection {
     entity_type: "PERSON",
     score: 0.9,
     text: "Jean Dupont",
+    likely: true,
     ...fields,
   };
 }
@@ -147,6 +148,50 @@ describe("ReviewList", () => {
     await userEvent.click(group);
 
     expect(onChange).toHaveBeenLastCalledWith(new Set());
+  });
+
+  it("asks once about a value found several times", () => {
+    const first = detection({ start: 0, end: 11 });
+    const second = detection({ start: 40, end: 51 });
+    const onChange = vi.fn();
+    render(<Harness detections={[first, second]} onChange={onChange} />);
+
+    const row = screen.getByRole("checkbox", { name: /Jean Dupont/ });
+    expect(row).toHaveAccessibleName(expect.stringContaining("2"));
+
+    return userEvent.click(row).then(() => {
+      // One tick, both occurrences: they would get the same pseudonym anyway.
+      expect(onChange).toHaveBeenCalledWith(
+        new Set([detectionKey(first), detectionKey(second)]),
+      );
+    });
+  });
+
+  it("puts the values the model is least sure of below the rest", () => {
+    render(
+      <Harness
+        detections={[
+          detection({ text: "Participants", start: 0, end: 12, likely: false }),
+          detection({ text: "Claire Dubois", start: 20, end: 33 }),
+        ]}
+      />,
+    );
+
+    const people = screen.getByRole("group", {
+      name: new RegExp(fr["anonymization.entity.PERSON"]),
+    });
+    const rows = within(people)
+      .getAllByRole("checkbox")
+      .map((box) => box.closest("li")?.textContent ?? "");
+
+    expect(rows.at(-1)).toEqual(expect.stringContaining("Participants"));
+    expect(screen.getByText(fr["anonymization.lessLikely"])).toBeVisible();
+  });
+
+  it("says nothing about likelihood when every value is a solid one", () => {
+    render(<Harness detections={[detection()]} />);
+
+    expect(screen.queryByText(fr["anonymization.lessLikely"])).toBeNull();
   });
 
   it("shows text the format cannot rewrite, without offering it", () => {

@@ -102,6 +102,13 @@ the word after a colon — alongside everything that really is personal informat
 costs a click; a value that is never reported is a value that stays in the copy, so the balance is
 deliberately set that way. Read the list before confirming.
 
+Two things make that list readable. One value is one row, however many times it appears: every
+occurrence of a name gets the same pseudonym anyway, so asking about each one would ask the same
+question again. And the shape the detector gets wrong most often — a lone capitalised word opening
+a line or a heading — is ranked under a **Less likely** heading at the bottom of its type rather
+than dropped, because a one-word name in a table cell looks exactly the same. On the sample meeting
+report, that turns fifty questions into twenty-six, with nine doubtful ones grouped at the end.
+
 ### Naming of the copy
 
 The copy is `originalname-anonymized` in English, `originalname-anonymise` in French, keeping the

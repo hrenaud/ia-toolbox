@@ -167,6 +167,71 @@ class TestSpansNeverCrossALineBreak:
         ]
 
 
+class TestANameCarriesACapital:
+    """A proper noun is capitalised, in French as in English.
+
+    The small model returns the words around a name as part of it — "la mairie
+    de Rennes", "porte le numéro de sécurité" — and sometimes returns a run of
+    ordinary words with no name in it at all. Cutting the lowercase words off
+    the front leaves the value; a span with no capital left in it held no name
+    to begin with.
+    """
+
+    def test_the_lowercase_words_in_front_are_cut_off(self):
+        text = "la mairie de Rennes"
+
+        assert detection.name_span(text, 0, len(text)) == (13, 19)
+
+    def test_a_span_without_a_single_capital_is_dropped(self):
+        text = "porte le numéro de sécurité"
+        start, end = detection.name_span(text, 0, len(text))
+
+        assert start == end
+
+    def test_a_name_is_left_alone(self):
+        assert detection.name_span("Claire Dubois", 0, 13) == (0, 13)
+
+    def test_an_elided_article_is_cut_off_too(self):
+        text = "l'antenne de Rennes"
+
+        assert detection.name_span(text, 0, len(text)) == (13, 19)
+
+
+class TestLessLikelyNames:
+    """A lone capitalised word opening a line is where the model guesses.
+
+    A heading is one short segment with no sentence around it, so the model
+    decides on the capital alone and calls "Participants" a person. The rule
+    costs a cell holding nothing but a one-word name, which is why such a
+    detection is still reported — ranked below the rest, never dropped.
+    """
+
+    def test_a_lone_word_opening_a_line_is_less_likely(self):
+        text = "Nantes\nParticipants"
+
+        assert detection.is_likely(text, 7, 19, "PERSON") is False
+
+    def test_a_word_inside_a_line_is_likely(self):
+        text = "Lieu : Nantes"
+
+        assert detection.is_likely(text, 7, 13, "LOCATION") is True
+
+    def test_two_words_opening_a_line_are_likely(self):
+        text = "Claire Dubois"
+
+        assert detection.is_likely(text, 0, 13, "PERSON") is True
+
+    def test_only_names_are_ranked_this_way(self):
+        text = "2026"
+
+        assert detection.is_likely(text, 0, 4, "DATE_TIME") is True
+
+    def test_every_detection_says_how_likely_it_is(self):
+        found = detect("Le dossier de Marie Lefebvre est clos.")
+
+        assert all(isinstance(item.likely, bool) for item in found)
+
+
 class TestFrench:
     def test_a_person_and_a_place(self):
         text = "Le dossier de Marie Lefebvre a été transmis à la mairie de Bordeaux."

@@ -60,37 +60,19 @@ _DEPARTMENT = slice(5, 7)
 # Punctuation and whitespace a model sometimes leaves inside a span.
 _EDGE = ' \t\n\r\xa0.,;:!?()[]{}"«»…'
 
-# The small French model routinely includes the word that introduces a name:
-# "de Marie Lefebvre" rather than "Marie Lefebvre". Replacing that span deletes
-# a word the sentence needs and redacts one that is not personal data, so a
-# leading particle is cut off. The cost is a name whose particle is part of it —
-# "de Gaulle" tagged without a first name — keeping its particle in the clear;
-# the name itself is still replaced, which is what matters.
-_LEADING_PARTICLES = frozenset(
-    {
-        "de",
-        "du",
-        "des",
-        "le",
-        "la",
-        "les",
-        "à",
-        "au",
-        "aux",
-        "chez",
-        "par",
-        "pour",
-        "et",
-        "the",
-        "of",
-        "to",
-        "from",
-        "for",
-        "at",
-        "in",
-        "and",
-    }
-)
+# Types the model guesses at, as opposed to the ones a pattern decides.
+_NAME_TYPES = frozenset({"PERSON", "ORGANIZATION", "LOCATION"})
+
+# Where a capital is required. A person or an organization is named with one in
+# both languages, so the words the model sweeps up in front of a name — "la
+# mairie de Rennes" — are cut, and a span holding no capital at all — "porte le
+# numéro de sécurité", "carte de service" — held no name to begin with.
+#
+# LOCATION is deliberately left out. An address is lowercase and still personal
+# data: cutting "rue des Lilas" down to "Lilas" would leave the street in the
+# copy, and the places the model gets wrong are single words anyway, which the
+# ranking below already covers.
+_CAPITALISED_TYPES = frozenset({"PERSON", "ORGANIZATION"})
 
 
 def nir_key_matches(value: str) -> bool:
@@ -190,6 +172,10 @@ def _analyze(unit: TextUnit, language: str) -> list[Detection]:
         if result.entity_type not in ENTITY_TYPES:
             continue
         for start, end in line_spans(unit.text, result.start, result.end):
+            if result.entity_type in _CAPITALISED_TYPES:
+                start, end = name_span(unit.text, start, end)
+                if start == end:
+                    continue
             found.append(
                 Detection(
                     unit.id,
@@ -198,9 +184,60 @@ def _analyze(unit: TextUnit, language: str) -> list[Detection]:
                     result.entity_type,
                     result.score,
                     unit.text[start:end],
+                    is_likely(unit.text, start, end, result.entity_type),
                 )
             )
     return found
+
+
+def name_span(text: str, start: int, end: int) -> tuple[int, int]:
+    """
+    Narrow a span to the part of it that could be a name.
+
+    Leading words with no capital are cut off, one at a time, because the model
+    returns the words that introduce a name as part of it. A span where that
+    leaves nothing never held a name.
+
+    Arguments:
+        text: The unit's text, which the offsets index into.
+        start: Where the span starts.
+        end: Where it ends, exclusive.
+
+    Returns:
+        The narrowed offsets, equal to each other if no capital was found.
+    """
+    while start < end and not text[start].isupper():
+        space = text.find(" ", start, end)
+        if space == -1:
+            return start, start
+        start = space + 1
+        while start < end and text[start] == " ":
+            start += 1
+    return start, end
+
+
+def is_likely(text: str, start: int, end: int, entity_type: str) -> bool:
+    """
+    Whether this detection has the shape the model usually gets right.
+
+    One capitalised word opening a line is where a small model decides on the
+    capital alone: a heading is a segment with no sentence around it, so
+    "Participants" and "Décisions" come back as people. The same shape is also
+    a table cell holding one name, which is why this ranks a detection rather
+    than dropping it.
+
+    Arguments:
+        text: The unit's text, which the offsets index into.
+        start: Where the span starts.
+        end: Where it ends, exclusive.
+        entity_type: Only the types a model guesses at are ranked.
+
+    Returns:
+        False for the shape above, True for everything else.
+    """
+    if entity_type not in _NAME_TYPES or " " in text[start:end]:
+        return True
+    return text[:start].rpartition("\n")[2].strip() != ""
 
 
 def line_spans(text: str, start: int, end: int) -> list[tuple[int, int]]:
@@ -258,11 +295,6 @@ def _trim(text: str, start: int, end: int) -> tuple[int, int]:
         start += 1
     while end > start and text[end - 1] in _EDGE:
         end -= 1
-
-    head, space, _ = text[start:end].partition(" ")
-    while space and head.casefold() in _LEADING_PARTICLES:
-        start += len(head) + 1
-        head, space, _ = text[start:end].partition(" ")
 
     return start, end
 

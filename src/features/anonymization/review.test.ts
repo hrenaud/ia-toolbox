@@ -14,6 +14,7 @@ import {
   describeAnonymizationError,
   detectionKey,
   groupByEntity,
+  groupByValue,
   isSelectable,
 } from "./review";
 
@@ -32,6 +33,7 @@ function detection(fields: Partial<Detection> = {}): Detection {
     entity_type: "PERSON",
     score: 0.85,
     text: "Jean Dupont",
+    likely: true,
     ...fields,
   };
 }
@@ -108,6 +110,59 @@ describe("grouping", () => {
     const groups = groupByEntity([detection({ entity_type: "FUTURE_TYPE" })]);
 
     expect(groups.map((group) => group.entityType)).toEqual(["FUTURE_TYPE"]);
+  });
+
+  /**
+   * The same name found eight times is one decision, not eight. Every
+   * occurrence of a value already gets the same pseudonym, so asking about
+   * each one asks the same question again, and a ten-line document was
+   * producing fifty rows.
+   */
+  it("collapses every occurrence of a value into one row", () => {
+    const rows = groupByValue([
+      detection({ text: "Claire Dubois", start: 0, end: 13 }),
+      detection({ text: "Marc Lefèvre", start: 20, end: 32 }),
+      detection({ text: "Claire Dubois", start: 40, end: 53 }),
+    ]);
+
+    expect(rows.map((row) => row.text)).toEqual([
+      "Claire Dubois",
+      "Marc Lefèvre",
+    ]);
+    expect(rows[0].detections).toHaveLength(2);
+  });
+
+  it("collapses two spellings of one value, as the pseudonyms do", () => {
+    const rows = groupByValue([
+      detection({ text: "Nantes", start: 0, end: 6 }),
+      detection({ text: "NANTES", start: 10, end: 16 }),
+    ]);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].text).toBe("Nantes");
+  });
+
+  it("ranks the less likely values below the rest", () => {
+    const rows = groupByValue([
+      detection({ text: "Participants", start: 0, end: 12, likely: false }),
+      detection({ text: "Claire Dubois", start: 20, end: 33 }),
+    ]);
+
+    expect(rows.map((row) => row.text)).toEqual([
+      "Claire Dubois",
+      "Participants",
+    ]);
+    expect(rows.map((row) => row.likely)).toEqual([true, false]);
+  });
+
+  it("keeps a value found once in a good place and once in a bad one", () => {
+    const rows = groupByValue([
+      detection({ text: "Nantes", start: 0, end: 6, likely: false }),
+      detection({ text: "Nantes", start: 20, end: 26, likely: true }),
+    ]);
+
+    expect(rows[0].likely).toBe(true);
+    expect(rows[0].detections).toHaveLength(2);
   });
 
   it("gives every detection in a unit its own key", () => {

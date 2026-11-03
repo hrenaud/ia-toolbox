@@ -592,6 +592,39 @@ the model tagged `NOUN`. For a privacy tool a miss is worse than a noise row
 and the review screen starts empty, so the filter is rejected. The README says
 plainly what to expect instead.
 
+**A larger model is not the answer either.** `fr_core_news_md` was measured on
+the same fixture: 33 rows against the small model's 35, the same `La carte de
+service` and `Université`, and `rue des Lilas` cut down to `Lilas` — a worse
+address on the one value a reader would most want gone. Forty-four megabytes for
+two rows and a recall loss is not a trade worth shipping, so the two small
+models stay.
+
+**What the noise cost is paid with instead.** Three rules, none of which drops
+anything:
+
+- A `PERSON` or an `ORGANIZATION` is narrowed to the part of it that starts with
+  a capital, because both are named with one in French and English. `la mairie
+de Rennes` becomes `Rennes`, and a span holding no capital at all — `porte le
+numéro de sécurité` — held no name to begin with and is dropped. `LOCATION` is
+  excluded from this: an address is lowercase and still personal data, and
+  cutting `rue des Lilas` to `Lilas` would leave the street in the copy. This
+  rule subsumes the older list of leading particles, which is deleted.
+- `Detection.likely` is false for the shape the model gets wrong most often: a
+  lone capitalised word opening a line. It is reported all the same — a one-word
+  name in a table cell has that exact shape — but the review screen ranks it
+  under its own heading at the bottom of its type. `score` is the detector's
+  confidence and answers a different question; this one is ours.
+- The review screen collapses every occurrence of a value into one row, case
+  ignored, because `operators.py` already assigns one pseudonym per
+  `(type, value.casefold())`. Showing eight occurrences apart would promise a
+  distinction the output does not make, and it is what turned a ten-line
+  document into fifty questions. The count the page announces is counted in rows
+  for the same reason.
+
+Measured on the fixture, and on the packaged binary: 47 spans become 35 rows, 9
+of them ranked low, and all 9 are ordinary words — `Participants`, `Décisions`,
+`Rédigé`. Twenty-six questions remain where there were fifty.
+
 ## Verification strategy
 
 Tests first, per the project's rule that a test passing before the fix exists
@@ -686,10 +719,11 @@ real at a fraction of the cost and every later step inherits it.
 - Whether clearing document properties is on by default. It is the safer
   default and the more surprising one.
 - The exact mask length per entity type.
-- ~~Where the model download is triggered~~ — **moot for now**: the two small
-  models are frozen into the worker, so there is no download to trigger. The
-  question returns only if the app ships a larger model, and it should then get
-  the same answer as the optional OCR model.
+- ~~Where the model download is triggered~~ — **moot**: the two small models are
+  frozen into the worker, so there is no download to trigger, and
+  `fr_core_news_md` was measured and rejected (see "A larger model is not the
+  answer either"). The question returns only if a larger model is reconsidered,
+  and it should then get the same answer as the optional OCR model.
 - Which local OCR engine tier C uses, inherited from the conversion workflow's
   OCR decision.
 - ~~What the app tells a user who selects a PDF~~ — **decided**: convert it

@@ -46,6 +46,14 @@ export interface EntityGroup {
   detections: Detection[];
 }
 
+/** One value, and every place it was found. */
+export interface ValueRow {
+  /** The first spelling seen, which is what the row shows. */
+  text: string;
+  detections: Detection[];
+  likely: boolean;
+}
+
 /** Identify one detection within one analysis, for selection state. */
 export function detectionKey(detection: Detection): string {
   return `${detection.unit_id}|${detection.start}-${detection.end}`;
@@ -85,6 +93,48 @@ export function groupByEntity(detections: Detection[]): EntityGroup[] {
   return [...groups.entries()]
     .map(([entityType, found]) => ({ entityType, detections: found }))
     .sort((a, b) => rank(a.entityType) - rank(b.entityType));
+}
+
+/**
+ * Collapse every occurrence of a value into one row, least likely last.
+ *
+ * The same name found eight times is one decision, not eight: each occurrence
+ * already gets the same pseudonym, so asking about each one asks the same
+ * question again. Two spellings of one value are one row for the same reason —
+ * the worker assigns its labels case-insensitively, so showing them apart
+ * would promise a distinction the output does not make.
+ *
+ * A value is ranked low only when every occurrence of it is: found once in the
+ * middle of a sentence, it is a real value that also happens to open a line
+ * somewhere else.
+ */
+export function groupByValue(detections: Detection[]): ValueRow[] {
+  const rows = new Map<string, ValueRow>();
+  for (const detection of detections) {
+    const key = valueKey(detection);
+    const found = rows.get(key);
+    if (found) {
+      found.detections.push(detection);
+      found.likely ||= detection.likely;
+    } else {
+      rows.set(key, {
+        text: detection.text,
+        detections: [detection],
+        likely: detection.likely,
+      });
+    }
+  }
+  return [...rows.values()].sort((a, b) => Number(b.likely) - Number(a.likely));
+}
+
+/**
+ * The row a detection belongs to: one type, one value, case ignored.
+ *
+ * The page counts rows with this, so that the count it announces and the rows
+ * the user reads are the same thing.
+ */
+export function valueKey(detection: Detection): string {
+  return `${detection.entity_type}|${detection.text.trim().toLocaleLowerCase()}`;
 }
 
 /**

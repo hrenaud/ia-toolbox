@@ -115,7 +115,7 @@ class TestMarkdown:
         path = write(
             tmp_path,
             "note.md",
-            "Script :\n\n```python\nOWNER = \"admin@novagaia.fr\"\n```\n\nFin.\n",
+            'Script :\n\n```python\nOWNER = "admin@novagaia.fr"\n```\n\nFin.\n',
         )
 
         extraction = extract(path)
