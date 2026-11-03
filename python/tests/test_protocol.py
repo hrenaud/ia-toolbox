@@ -13,6 +13,14 @@ def request(operation="list_formats", **fields):
     return {"id": str(uuid4()), "operation": operation, **fields}
 
 
+# A folder and a file that exist nowhere but are absolute on the platform the
+# tests run on. `parse_request` checks the paths before the payload, so a
+# POSIX literal made every payload test fail on Windows as `invalid_path`:
+# "/tmp/dossier.txt" has no drive letter and is therefore not absolute there.
+A_FOLDER = Path(Path.cwd().anchor) / "tmp"
+A_FILE = A_FOLDER / "dossier.txt"
+
+
 # Scripts that monkeypatch the converter have to import markitdown at the top,
 # before calling main(). The worker itself imports it lazily, after installing
 # its output isolation (see document_worker/main.py), so this forced-early
@@ -193,9 +201,9 @@ class TestAnonymizationRequests:
 
     def test_analyze_has_an_input_and_no_output_folder(self):
         """Analysis writes nothing, so demanding an output folder is a lie."""
-        parsed = self.accepted("analyze", input_path="/tmp/dossier.txt")
+        parsed = self.accepted("analyze", input_path=str(A_FILE))
 
-        assert parsed.input_path == Path("/tmp/dossier.txt")
+        assert parsed.input_path == A_FILE
         assert parsed.output_directory is None
 
     def test_analyze_still_needs_its_input(self):
@@ -203,27 +211,27 @@ class TestAnonymizationRequests:
 
     def test_analyze_takes_a_language_to_read_the_document_in(self):
         """The review screen sends it back when the user corrects the guess."""
-        parsed = self.accepted("analyze", input_path="/tmp/dossier.txt", language="en")
+        parsed = self.accepted("analyze", input_path=str(A_FILE), language="en")
 
         assert parsed.language == "en"
 
     def test_analyze_without_a_language_leaves_it_to_the_worker(self):
         """Absent is not "French": the worker has to guess, and then say so."""
-        parsed = self.accepted("analyze", input_path="/tmp/dossier.txt")
+        parsed = self.accepted("analyze", input_path=str(A_FILE))
 
         assert parsed.language is None
 
     def test_analyze_refuses_a_language_there_is_no_model_for(self):
         assert (
-            self.refused("analyze", input_path="/tmp/dossier.txt", language="de")
+            self.refused("analyze", input_path=str(A_FILE), language="de")
             == "invalid_request"
         )
 
     def test_anonymize_carries_paths_payload_and_choices(self):
         parsed = self.accepted(
             "anonymize",
-            input_path="/tmp/dossier.txt",
-            output_directory="/tmp",
+            input_path=str(A_FILE),
+            output_directory=str(A_FOLDER),
             operator="mask",
             language="en",
             detections=[
@@ -239,8 +247,8 @@ class TestAnonymizationRequests:
         """Replace is the recommended operator, and this is a French product."""
         parsed = self.accepted(
             "anonymize",
-            input_path="/tmp/dossier.txt",
-            output_directory="/tmp",
+            input_path=str(A_FILE),
+            output_directory=str(A_FOLDER),
             detections=[],
         )
 
@@ -289,8 +297,8 @@ class TestAnonymizationRequests:
     def test_a_payload_that_is_not_exactly_right_is_refused(self, payload):
         code = self.refused(
             "anonymize",
-            input_path="/tmp/dossier.txt",
-            output_directory="/tmp",
+            input_path=str(A_FILE),
+            output_directory=str(A_FOLDER),
             **payload,
         )
 
@@ -300,8 +308,8 @@ class TestAnonymizationRequests:
         """The UI needs to know which request failed; it needs no echo of it."""
         item = request(
             "anonymize",
-            input_path="/tmp/dossier.txt",
-            output_directory="/tmp",
+            input_path=str(A_FILE),
+            output_directory=str(A_FOLDER),
             detections=[{"unit_id": "secret-unit", "start": 0, "end": 4}],
         )
 
