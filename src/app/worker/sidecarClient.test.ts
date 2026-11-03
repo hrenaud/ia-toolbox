@@ -228,6 +228,173 @@ it("can stop again after automatic cleanup fails", async () => {
   expect(mock.kill).toHaveBeenCalledTimes(2);
 });
 
+// Anonymization is two operations over the same pipe, and the one that writes
+// carries a payload. What matters here is that the payload reaches the worker
+// unaltered and that a reply shaped for one operation cannot satisfy another.
+
+const KEPT = [
+  { unit_id: "content", start: 13, end: 27, entity_type: "PERSON" },
+];
+
+it("sends the kept detections and the choices verbatim", async () => {
+  const client = await SidecarClient.start();
+  const run = client.request({
+    operation: "anonymize",
+    input_path: "/dossier.txt",
+    output_directory: "/out",
+    operator: "mask",
+    language: "en",
+    detections: KEPT,
+  });
+  expect(sent()).toEqual({
+    id: expect.any(String),
+    operation: "anonymize",
+    input_path: "/dossier.txt",
+    output_directory: "/out",
+    operator: "mask",
+    language: "en",
+    detections: KEPT,
+  });
+  emit({
+    id: sent().id,
+    event: "result",
+    status: "success",
+    output_path: "/out/dossier-anonymized.txt",
+    notes: ["xml_attributes_not_analyzed"],
+  });
+  expect(await run).toMatchObject({
+    output_path: "/out/dossier-anonymized.txt",
+    notes: ["xml_attributes_not_analyzed"],
+  });
+});
+
+it("carries an analysis back whole", async () => {
+  const client = await SidecarClient.start();
+  const run = client.request({ operation: "analyze", input_path: "/a.txt" });
+  expect(sent()).toEqual({
+    id: expect.any(String),
+    operation: "analyze",
+    input_path: "/a.txt",
+  });
+  emit({
+    id: sent().id,
+    event: "result",
+    status: "success",
+    language: "fr",
+    units: [{ id: "content", location: "document", rewritable: true }],
+    detections: [
+      {
+        unit_id: "content",
+        start: 13,
+        end: 27,
+        entity_type: "PERSON",
+        score: 0.85,
+        text: "Marie Lefebvre",
+        likely: true,
+        excerpt: "…signé par Marie Lefebvre le 3…",
+      },
+    ],
+    notes: [],
+  });
+  const result = await run;
+  if (result.event !== "result" || result.status !== "success")
+    throw new Error("Expected an analysis");
+  if (!("detections" in result)) throw new Error("Expected detections");
+  expect(result.detections[0].text).toBe("Marie Lefebvre");
+  expect(result.units[0].location).toBe("document");
+});
+
+it("lists the anonymization formats, which declare no optional component", async () => {
+  const client = await SidecarClient.start();
+  const run = client.request({ operation: "list_anonymization_formats" });
+  emit({
+    id: sent().id,
+    event: "formats",
+    items: [{ extension: ".docx", label: "Word document" }],
+  });
+  expect(await run).toMatchObject({
+    items: [{ extension: ".docx", label: "Word document" }],
+  });
+});
+
+// A reply whose shape belongs to another operation is the case that would
+// otherwise hand a page a result it never asked for.
+it.each([
+  { operation: "analyze" as const, reply: { output_path: "/out/a.txt" } },
+  {
+    operation: "anonymize" as const,
+    reply: { units: [], detections: [], notes: [] },
+  },
+])(
+  "refuses a reply shaped for another operation: %j",
+  async ({ operation, reply }) => {
+    const client = await SidecarClient.start();
+    const run = client.request({
+      operation,
+      input_path: "/a.txt",
+      output_directory: "/out",
+      operator: "replace",
+      language: "fr",
+      detections: [],
+    });
+    const check = expect(run).rejects.toMatchObject({
+      code: "invalid_response",
+    });
+    emit({ id: sent().id, event: "result", status: "success", ...reply });
+    await check;
+  },
+);
+
+it.each([
+  {
+    language: "fr",
+    units: [{ id: "content", location: "document" }],
+    detections: [],
+    notes: [],
+  },
+  {
+    language: "fr",
+    units: [],
+    detections: [{ unit_id: "content", start: 0, end: 1 }],
+    notes: [],
+  },
+  { language: "fr", units: [], detections: [], notes: ["note", 42] },
+  // The language the names were read in is not optional: the screen shows it
+  // so the user can correct it, and a blank there is a question they cannot
+  // answer.
+  { units: [], detections: [], notes: [] },
+  { output_path: "/out/a.txt", notes: "xml_attributes_not_analyzed" },
+])("validates an anonymization payload: %j", async (reply) => {
+  const client = await SidecarClient.start();
+  const run = client.request({ operation: "analyze", input_path: "/a.txt" });
+  const check = expect(run).rejects.toMatchObject({
+    code: "invalid_response",
+  });
+  emit({ id: sent().id, event: "result", status: "success", ...reply });
+  await check;
+});
+
+it("reports progress for an analysis", async () => {
+  const client = await SidecarClient.start();
+  const progress = vi.fn();
+  const run = client.request(
+    { operation: "analyze", input_path: "/a.txt" },
+    progress,
+  );
+  emit({ id: sent().id, event: "progress", percent: 0 });
+  emit({
+    id: sent().id,
+    event: "result",
+    status: "success",
+    language: "fr",
+    units: [],
+    detections: [],
+    notes: [],
+  });
+  await run;
+  expect(progress).toHaveBeenCalledWith(0);
+});
+
 it("reports startup cleanup failure without exposing process details", async () => {
   mock.spawn.mockImplementationOnce(async () => {
     mock.close?.();

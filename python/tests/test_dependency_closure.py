@@ -7,6 +7,12 @@ publishes an ``all`` extra that pulls Azure Document Intelligence, Azure
 Content Understanding and speech clients, so widening the pin from
 ``[docx,pdf,pptx,xls,xlsx]`` would hand document contents to a remote service
 without a single line of our code changing.
+
+Presidio has the same shape, which is why it is pinned with no extras at all:
+``azure-ai-language`` and ``ahds`` are remote analyzers, and ``langextract``
+reaches an LLM provider. Its ``gliner`` and ``transformers`` extras are local
+but drag PyTorch into a frozen worker, so they stay out for weight rather than
+for privacy.
 """
 
 from importlib.metadata import distributions
@@ -49,6 +55,6 @@ def test_installed_closure_has_no_remote_service_client():
 
 def test_detection_recognises_a_cloud_client():
     """Guard the guard: an empty result must mean a clean closure, not a no-op."""
-    assert find_remote_clients(
-        ["markitdown", "azure-ai-documentintelligence"]
-    ) == ["azure-ai-documentintelligence"]
+    assert find_remote_clients(["markitdown", "azure-ai-documentintelligence"]) == [
+        "azure-ai-documentintelligence"
+    ]

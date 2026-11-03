@@ -29,10 +29,24 @@ def test_local_file_converters_are_included():
     extensions = {fmt.extension for fmt in formats}
 
     # These are local-file converters available in markitdown 0.1.6
-    expected_local = {".txt", ".csv", ".epub", ".docx", ".xls", ".xlsx", ".pptx", ".pdf", ".html", ".ipynb", ".zip"}
+    expected_local = {
+        ".txt",
+        ".csv",
+        ".epub",
+        ".docx",
+        ".xls",
+        ".xlsx",
+        ".pptx",
+        ".pdf",
+        ".html",
+        ".ipynb",
+        ".zip",
+    }
 
     # All expected converters should be present
-    assert expected_local.issubset(extensions), f"Missing: {expected_local - extensions}"
+    assert expected_local.issubset(extensions), (
+        f"Missing: {expected_local - extensions}"
+    )
 
 
 def test_odt_is_not_included():

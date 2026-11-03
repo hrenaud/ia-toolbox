@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
+import { AnonymizationPage } from "../features/anonymization/AnonymizationPage";
 import { ConversionPage } from "../features/conversion/ConversionPage";
 import { dictionaries, getInitialLocale, type Locale } from "./i18n";
 import { loadSettings, saveSettings, type Settings } from "./settings";
 import { getTheme, type ThemePreference } from "./theme";
+import { stopClient } from "./worker/sharedClient";
 
 export function AppShell() {
   const [settings, setSettings] = useState(loadSettings);
@@ -32,6 +34,10 @@ export function AppShell() {
       window.removeEventListener("focus", updateTheme);
     };
   }, []);
+
+  // The worker belongs to the app, not to a page: both workflows talk to the
+  // same process, so switching between them must not stop it.
+  useEffect(() => () => void stopClient(), []);
 
   useEffect(() => {
     document.documentElement.lang = locale;
@@ -89,9 +95,7 @@ export function AppShell() {
           {workflow === "convert" ? (
             <ConversionPage locale={locale} />
           ) : (
-            <div className="status-card" role="status">
-              <p>{t.unavailable}</p>
-            </div>
+            <AnonymizationPage locale={locale} />
           )}
           <p className="privacy">{t.privacy}</p>
         </main>

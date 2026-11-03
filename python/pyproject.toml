@@ -2,7 +2,16 @@
 name = "document-worker"
 version = "0.1.0"
 requires-python = ">=3.11,<3.14"
-dependencies = ["markitdown[docx,pdf,pptx,xls,xlsx]==0.1.6"]
+dependencies = [
+    "markitdown[docx,pdf,pptx,xls,xlsx]==0.1.6",
+    # Both Presidio packages are pinned without extras, deliberately. Their
+    # extras are where the remote-service clients live: `azure-ai-language` and
+    # `ahds` pull Azure clients, and `langextract` pulls OpenAI. The base
+    # distributions are local-only. tests/test_dependency_closure.py is what
+    # keeps that true rather than this comment.
+    "presidio-analyzer==2.2.366",
+    "presidio-anonymizer==2.2.366",
+]
 
 [project.scripts]
 document-worker = "document_worker.main:main"
@@ -12,7 +21,19 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [dependency-groups]
-dev = ["pytest>=8,<10", "ruff>=0.11,<1"]
+# The two spaCy models sit here, not in `dependencies`, because the app
+# downloads its model on the user's machine rather than shipping it in the
+# binary. In the `dev` group they are installed by both `uv sync --locked` in
+# CI and a plain `uv run pytest` locally, which is the point: a detection test
+# that skips for want of a model is a green build that proved nothing.
+# They are pinned by URL and hash-locked in uv.lock — `spacy download` would be
+# an unpinned network fetch at test time.
+dev = [
+    "en-core-web-sm",
+    "fr-core-news-sm",
+    "pytest>=8,<10",
+    "ruff>=0.11,<1",
+]
 build = ["pyinstaller>=6.1,<7"]
 
 [tool.ruff]
@@ -20,3 +41,7 @@ target-version = "py311"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.uv.sources]
+fr-core-news-sm = { url = "https://github.com/explosion/spacy-models/releases/download/fr_core_news_sm-3.8.0/fr_core_news_sm-3.8.0-py3-none-any.whl" }
+en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }

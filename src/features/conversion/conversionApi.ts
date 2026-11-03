@@ -1,7 +1,5 @@
-import {
-  SidecarClient,
-  type FormatInfo as WorkerFormatInfo,
-} from "../../app/worker/sidecarClient";
+import { getClient } from "../../app/worker/sharedClient";
+import type { FormatInfo as WorkerFormatInfo } from "../../app/worker/sidecarClient";
 
 /**
  * UI-facing format information with camelCase names
@@ -27,19 +25,6 @@ export interface ConversionJob {
   message?: string;
 }
 
-let client: SidecarClient | null = null;
-
-/**
- * Initialize the sidecar client on first use.
- * The client lifecycle is managed per-session; stop() is called in cleanup only.
- */
-async function getClient(): Promise<SidecarClient> {
-  if (!client) {
-    client = await SidecarClient.start();
-  }
-  return client;
-}
-
 /**
  * Load the list of supported formats from the worker.
  * Maps worker's snake_case fields to UI's camelCase.
@@ -54,7 +39,8 @@ export async function loadSupportedFormats(): Promise<FormatInfo[]> {
     return result.items.map((item: WorkerFormatInfo) => ({
       extension: item.extension,
       label: item.label,
-      requiresOptionalComponent: item.requires_optional_component,
+      // Only the anonymization catalog omits the flag; conversion always sends it.
+      requiresOptionalComponent: item.requires_optional_component ?? false,
     }));
   } catch (err) {
     throw mapError(err);
@@ -92,20 +78,22 @@ export async function startConversion(
         );
 
         if (result.event === "result") {
-          if (result.status === "success") {
-            onUpdate({
-              id,
-              inputPath,
-              outputPath: result.output_path,
-              status: "success",
-            });
-          } else {
+          if (result.status === "error") {
             onUpdate({
               id,
               inputPath,
               status: "error",
               errorCode: result.error_code,
               message: result.message,
+            });
+            // A conversion answers with a written file; the client rejects
+            // anything else before it reaches here.
+          } else if ("output_path" in result) {
+            onUpdate({
+              id,
+              inputPath,
+              outputPath: result.output_path,
+              status: "success",
             });
           }
         }
@@ -120,16 +108,6 @@ export async function startConversion(
     }
   } catch (err) {
     throw mapError(err);
-  }
-}
-
-/**
- * Stop the sidecar client (cleanup on app shutdown).
- */
-export async function stopClient(): Promise<void> {
-  if (client) {
-    await client.stop();
-    client = null;
   }
 }
 
