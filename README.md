@@ -112,8 +112,16 @@ than a verdict, because the detector does get it wrong and you are the one who k
 is a person or a firm. And the shape the detector gets wrong most often — a lone capitalised word
 opening a line or a heading — is ranked under a **Less likely** heading at the bottom rather than
 dropped, because a one-word name in a table cell looks exactly the same. On the sample meeting
-report, that turns thirty-four spans into twenty-seven questions, six of them doubtful and grouped
-at the end.
+report, that turns thirty-two spans into twenty-four questions, two of them doubtful and grouped at
+the end.
+
+Names are read one line at a time, not over the whole document. A document is not prose: a heading,
+a paragraph and a table row carry no full stop between them, and a model given all of it at once
+reads one run-on sentence — it loses names in the middle of it and takes the headings for people.
+
+**Dates are not detected in French.** The French model has no date category, so a date is left in
+the copy even though the type menu offers one; the English model does report them. Replace a date
+that matters by hand, in the original, before anonymizing.
 
 Names are read by a model for one language, the one shown above the list; patterns such as IBANs
 and email addresses are language-independent. A document read in the wrong language has its names

@@ -414,25 +414,31 @@ def _overlaps(one: Detection, other: Detection) -> bool:
 
 
 def _analyze(unit: TextUnit, language: str, names: bool) -> list[Detection]:
+    # A CSV header or a JSON key is the strongest signal available: a column
+    # called "courriel" lifts recall far above what its values alone give.
+    context = list(unit.context) or None
     # `entities=` is not passed on purpose. Not every type has a recognizer in
     # every language — Presidio ships no French credit card recognizer, and the
     # English pass covers it — and asking for one that is missing is a
     # deprecation warning today and an error in a later version. Filtering the
     # results is the same restriction without the per-language bookkeeping.
-    results = _analyzer().analyze(
-        unit.text,
-        language=language,
-        # A CSV header or a JSON key is the strongest signal available: a column
-        # called "courriel" lifts recall far above what its values alone give.
-        context=list(unit.context) or None,
-    )
+    results = [
+        (0, result)
+        for result in _analyzer().analyze(unit.text, language=language, context=context)
+        # The model's guesses from this call are dropped even in the names pass:
+        # `_name_results` makes them again, from text the model can read.
+        if result.entity_type not in _MODEL_TYPES
+    ]
+    if names:
+        results.extend(_name_results(unit, language, context))
+
     found = []
-    for result in results:
+    for offset, result in results:
         if result.entity_type not in ENTITY_TYPES:
             continue
-        if not names and result.entity_type in _MODEL_TYPES:
-            continue
-        for start, end in line_spans(unit.text, result.start, result.end):
+        for start, end in line_spans(
+            unit.text, offset + result.start, offset + result.end
+        ):
             if result.entity_type in _CAPITALISED_TYPES:
                 start, end = name_span(unit.text, start, end)
                 if start == end:
@@ -453,6 +459,38 @@ def _analyze(unit: TextUnit, language: str, names: bool) -> list[Detection]:
                 )
             )
     return found
+
+
+def _name_results(unit: TextUnit, language: str, context: list[str] | None):
+    """
+    The model's own guesses, read one line at a time.
+
+    A unit's text is not prose. An adapter joins a heading, a paragraph and a
+    table row with newlines, and none of them ends in a full stop, so the whole
+    text reads as one run-on sentence. A small model given that loses names in
+    the middle of it — on the sample meeting report, a person named in a
+    paragraph between two headings went unreported — and calls the headings
+    people, having nothing but the capital to go on. One line is the largest
+    piece of a unit we know reads as a sentence.
+
+    The patterns keep the whole text instead: a NIR is accepted on the strength
+    of the words that introduce it, and those can sit a line away.
+
+    Arguments:
+        unit: The unit being analyzed.
+        language: The document's language. Only this one's model runs.
+        context: The unit's own context words, passed through unchanged.
+
+    Yields:
+        (offset of the line in the unit's text, result) for each guess.
+    """
+    analyzer = _analyzer()
+    for offset, line in _lines_between(unit.text, 0, len(unit.text)):
+        if not line.strip():
+            continue
+        for result in analyzer.analyze(line, language=language, context=context):
+            if result.entity_type in _MODEL_TYPES:
+                yield offset, result
 
 
 def name_span(text: str, start: int, end: int) -> tuple[int, int]:

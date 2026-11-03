@@ -468,6 +468,65 @@ class TestLessLikelyNames:
         assert all(isinstance(item.likely, bool) for item in found)
 
 
+class TestNamesAreReadLineByLine:
+    """
+    A unit's text is not prose, so the model must not be handed all of it.
+
+    An adapter joins a heading, a paragraph and a table row with newlines, and
+    none of them ends in a full stop. Given the whole thing at once, a small
+    model reads one run-on sentence: names in the middle of it go unnoticed and
+    headings come back as people. Patterns are the opposite case — a NIR is
+    accepted on the strength of the words introducing it — so they keep the
+    whole text.
+    """
+
+    def stub(self, monkeypatch) -> list[tuple[str, str]]:
+        """Record (text, language) for each call, and report one name per call."""
+        calls: list[tuple[str, str]] = []
+
+        class Result:
+            entity_type = "PERSON"
+            score = 0.85
+            start = 0
+
+            def __init__(self, end: int):
+                self.end = end
+
+        class Analyzer:
+            def analyze(self, text, language, context=None):
+                calls.append((text, language))
+                return [Result(len(text))] if text.strip() else []
+
+        monkeypatch.setattr(detection, "_analyzer", lambda: Analyzer())
+        return calls
+
+    def test_the_model_is_given_one_line_at_a_time(self, monkeypatch):
+        calls = self.stub(monkeypatch)
+
+        detection.detect([unit("Participants\nClaire Dubois est là.")], language="fr")
+
+        assert ("Participants", "fr") in calls
+        assert ("Claire Dubois est là.", "fr") in calls
+
+    def test_patterns_still_see_the_whole_text(self, monkeypatch):
+        calls = self.stub(monkeypatch)
+        text = "Participants\nClaire Dubois est là."
+
+        detection.detect([unit(text)], language="fr")
+
+        assert (text, "fr") in calls
+
+    def test_offsets_come_back_in_the_unit_text(self, monkeypatch):
+        self.stub(monkeypatch)
+        text = "Participants\nClaire Dubois est là."
+
+        found = detection.detect([unit(text)], language="fr")
+
+        assert all(text[item.start : item.end] == item.text for item in found)
+        # The second line, its full stop trimmed off like any other span's.
+        assert "Claire Dubois est là" in [item.text for item in found]
+
+
 class TestFrench:
     def test_a_person_and_a_place(self):
         text = "Le dossier de Marie Lefebvre a été transmis à la mairie de Bordeaux."

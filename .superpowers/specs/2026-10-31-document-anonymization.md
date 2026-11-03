@@ -399,9 +399,9 @@ corrupting the protocol.
   English prose tags ordinary words as names. The language is guessed from the
   text by counting the function words each model knows, reported in the result
   and overridable in the `analyze` request — the user is the one who can see
-  the guess was wrong. Only that language's model proposes names; the patterns
-  (email, IBAN, card, phone, NIR, date) are language-independent and still run
-  regardless. A genuinely bilingual document is read in one language and the
+  the guess was wrong. Only that language's model proposes names and dates; the
+  patterns (email, IBAN, card, phone, NIR) are language-independent and still
+  run regardless. A genuinely bilingual document is read in one language and the
   other language's names are missed: a deliberate trade for a list the user can
   actually read.
 - Entity types: person, organization, location, email address, phone number,
@@ -616,17 +616,25 @@ the suite would then test the plumbing while the recorded figures describe the
 shipped model — but it is no longer a post-install download.
 
 **Precision measured, and left as it is.** On the French meeting-report fixture
-the detector reports 34 spans, which the review screen collapses into 27 rows,
-6 of them ranked doubtful: `Participants`, `Décisions`, `Points`, `Annexe`,
-`Prochaine`, `Lieu` — section headings and the word after a colon, every one of
-them below the fold. Before these rules the same document produced about fifty
-rows with the noise mixed into them. A POS filter was prototyped —
+the detector reports 32 spans, which the review screen collapses into 24 rows,
+2 of them ranked doubtful: `Annexe` and `Prochaine` — section headings, both
+below the fold. Before these rules the same document produced about fifty rows
+with the noise mixed into them. A POS filter was prototyped —
 `AnalyzerEngine.analyze` takes pre-computed `nlp_artifacts`, so reading
 `.pos_` off the tokens costs no extra model time — and dropping single-token
 non-`PROPN` spans removed 10 false positives and also `Nantes`, a real location
 the model tagged `NOUN`. For a privacy tool a miss is worse than a noise row
 and the review screen starts empty, so the filter is rejected. The README says
 plainly what to expect instead.
+
+**Dates are not detected in French, and the type is kept anyway.**
+`fr_core_news_sm` labels only `LOC`, `MISC`, `ORG` and `PER` — it has no date
+category, so no French document ever yields a `DATE_TIME` detection, while
+`en_core_web_sm` does report them. The type stays in the menu because an English
+document uses it and because the user can retype a value onto it by hand. A
+French date pattern was not written: a date is a wide, ambiguous shape in free
+text, and a regex loose enough to catch `juin 2026` also catches every figure in
+a budget table. The README states the gap instead.
 
 **A larger model is not the answer either.** `fr_core_news_md` was measured on
 the same fixture: 33 rows against the small model's 35, the same `La carte de
@@ -635,8 +643,18 @@ address on the one value a reader would most want gone. Forty-four megabytes for
 two rows and a recall loss is not a trade worth shipping, so the two small
 models stay.
 
-**What the noise cost is paid with instead.** Five rules, only the first of
+**What the noise cost is paid with instead.** Six rules, only the first of
 which drops anything:
+
+- The model reads one line at a time; the patterns keep the whole unit. A unit's
+  text is not prose — an adapter joins a heading, a paragraph and a table row
+  with newlines and none of them ends in a full stop — so handed all of it the
+  small model reads one run-on sentence. It lost `Sophie Marchand`, named in a
+  paragraph between two headings, and the second `Thomas Nguyen`, in a table
+  cell, while reporting `Lieu`, `Participants`, `Décisions` and `Points` as
+  people. Per line it finds both names and reports none of those four. The
+  patterns are the opposite case: a NIR is accepted on the strength of the words
+  introducing it, which can sit a line away, so they still see everything.
 
 - A `PERSON` or an `ORGANIZATION` is narrowed to the part of it that starts with
   a capital, because both are named with one in French and English. `la mairie
