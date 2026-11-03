@@ -58,9 +58,9 @@ Specifics:
   JSON. JSONL is processed line by line so one malformed line does not lose the
   file.
 - `XML`/`HTML`: text nodes and attribute values that hold visible text are
-  analyzed. Tags, attribute names and structure are never rewritten. Scripts,
-  styles and comments are reported as not analyzed rather than silently
-  skipped.
+  analyzed. Tags, attribute names and structure are never rewritten. Comments
+  are analyzed like any other text; scripts and styles are reported as not
+  analyzed rather than silently skipped.
 
 `presidio-structured` is the obvious candidate for the CSV and JSON cases, but
 it is alpha, it decides per _column_ rather than per value, and it would pull
@@ -226,7 +226,7 @@ not-processed report:
 
 | Code                                | Meaning                                                                                                                    |
 | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `markup_code_not_analyzed`          | HTML/XML comments, `<script>` and `<style>` content, Markdown code blocks and code spans were not analyzed.                |
+| `markup_code_not_analyzed`          | `<script>` and `<style>` content was not analyzed.                                                                         |
 | `xml_attributes_not_analyzed`       | An XML document has attribute values; unlike HTML there is no way to tell visible text from metadata, so they are skipped. |
 | `tracked_changes_not_rewritten`     | The document has revisions (`w:delText`, `w:ins`); accepting them later can bring the personal data back.                  |
 | `document_properties_not_rewritten` | `docProps/core.xml` or `app.xml` holds text — author, company, title.                                                      |
@@ -320,20 +320,29 @@ Three rules that are not optional:
 ## Syntax is not content
 
 A tier A format carries its structure in the same characters as its text, and
-the first Markdown adapter handed the raw file to the model. That costs twice.
-An email inside a fenced code block is offered for replacement although this
-spec says code is not analyzed; and the syntax wrecks the sentences around it,
-so `**Lieu :** Nantes, salle Loire` yields `salle` as a person and a table cell
-comes back with its closing pipe inside the span.
+the first Markdown adapter handed the raw file to the model. The syntax wrecks
+the sentences: `**Lieu :** Nantes, salle Loire` yields `salle` as a person and
+a table cell comes back with its closing pipe inside the span.
 
 So the Markdown adapter splits the file into content and structure, and builds
-the `TextMap` over the content only. Excluded are fenced code blocks, inline
-code spans, HTML comments, raw HTML tags, heading markers, list bullets,
-blockquote markers, emphasis runs, table pipes and the table rule row. Code and
-comments raise `markup_code_not_analyzed`; emphasis and bullets are not worth a
-note. The adapter still does not parse Markdown into a tree and re-render it —
-every excluded piece is copied back byte for byte, and the first test of the
-class is that a document with no edits round-trips identically.
+the `TextMap` over the content only. Excluded are raw HTML tags, heading
+markers, list bullets, blockquote markers, emphasis runs, table pipes, the
+table rule row, and the delimiters around a code block or a comment — a fence
+and its info string, backticks, `<!--` and `-->`. The adapter still does not
+parse Markdown into a tree and re-render it — every excluded piece is copied
+back byte for byte, and the first test of the class is that a document with no
+edits round-trips identically.
+
+**What a delimiter wraps is content.** Code blocks, code spans and comments
+were excluded wholesale at first, on the reasoning that rewriting code by
+offset breaks it. That was wrong for the thing being built: the sample meeting
+report keeps two addresses and a name in its export snippet and another name in
+an internal review note, and those stayed in the anonymized copy while the
+report said the document was clean. A pseudonym written over a string literal
+leaves valid code, and a user who does not want one unchecks the row. So the
+body of a fence, of a code span and of a comment is analyzed and rewritable,
+and `markup_code_not_analyzed` is left to HTML's `<script>` and `<style>`,
+where the content is a program rather than prose.
 
 Any format added later excludes its own syntax the same way, rather than hoping
 the model ignores it.
@@ -616,7 +625,7 @@ the suite would then test the plumbing while the recorded figures describe the
 shipped model — but it is no longer a post-install download.
 
 **Precision measured, and left as it is.** On the French meeting-report fixture
-the detector reports 32 spans, which the review screen collapses into 24 rows,
+the detector reports 43 spans, which the review screen collapses into 34 rows,
 2 of them ranked doubtful: `Annexe` and `Prochaine` — section headings, both
 below the fold. Before these rules the same document produced about fifty rows
 with the noise mixed into them. A POS filter was prototyped —
@@ -627,14 +636,21 @@ the model tagged `NOUN`. For a privacy tool a miss is worse than a noise row
 and the review screen starts empty, so the filter is rejected. The README says
 plainly what to expect instead.
 
-**Dates are not detected in French, and the type is kept anyway.**
-`fr_core_news_sm` labels only `LOC`, `MISC`, `ORG` and `PER` — it has no date
-category, so no French document ever yields a `DATE_TIME` detection, while
-`en_core_web_sm` does report them. The type stays in the menu because an English
-document uses it and because the user can retype a value onto it by hand. A
-French date pattern was not written: a date is a wide, ambiguous shape in free
-text, and a regex loose enough to catch `juin 2026` also catches every figure in
-a budget table. The README states the gap instead.
+**French dates come from a pattern, because the model has no category for one.**
+`fr_core_news_sm` labels only `LOC`, `MISC`, `ORG` and `PER`, so no French
+document ever yielded a `DATE_TIME` detection and every date stayed in the
+copy, while `en_core_web_sm` reports its own. A pattern was initially rejected
+as too loose; that was wrong, because the twelve French month names anchor it.
+`FrenchDateRecognizer` matches a day with a month, a month with a year, or a
+fully separated numeric date, and a day or a year is required — so `juin 2026`
+and `18/04/2026` are dates while a bare `mars` and the figures in a budget
+table are not, there being no month name in one.
+
+That pattern is also why provenance, not entity type, decides which pass keeps
+a result. `_analyze` runs the patterns over a unit's whole text and the model
+over one line at a time, and it used to tell the two apart by entity type —
+which threw the new `DATE_TIME` results away, the model reporting that type too.
+`_from_model` reads `recognition_metadata["recognizer_name"]` instead.
 
 **A larger model is not the answer either.** `fr_core_news_md` was measured on
 the same fixture: 33 rows against the small model's 35, the same `La carte de

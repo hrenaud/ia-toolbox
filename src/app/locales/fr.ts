@@ -183,7 +183,7 @@ export const fr: Record<keyof typeof en, string> = {
   "anonymization.status.error": "Erreur",
   // Contenu lu mais non réécrit, indexé par le code de remarque du moteur
   "anonymization.note.markup_code_not_analyzed":
-    "Le code et le balisage de ce document n’ont pas été analysés, uniquement le texte visible par un lecteur.",
+    "Le contenu des scripts et des styles de ce document n’a pas été analysé.",
   "anonymization.note.xml_attributes_not_analyzed":
     "Les valeurs stockées dans les balises n’ont pas été analysées, uniquement le texte entre les balises.",
   "anonymization.note.tracked_changes_not_rewritten":

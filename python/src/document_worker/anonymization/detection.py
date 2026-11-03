@@ -83,6 +83,29 @@ _NAME_TYPES = frozenset({"PERSON", "ORGANIZATION", "LOCATION"})
 # address returned the postcode "44000" as a date.
 _MODEL_TYPES = _NAME_TYPES | {"DATE_TIME"}
 
+# How Presidio labels the recognizer a result came from, and what it calls the
+# NER model. The key is `RecognizerResult.RECOGNIZER_NAME_KEY`, spelled out here
+# so that reading provenance does not cost the presidio import.
+_RECOGNIZER_NAME = "recognizer_name"
+_MODEL_RECOGNIZER = "SpacyRecognizer"
+
+# The twelve French month names. They are what makes a date pattern safe: a
+# budget table has figures in every shape but no month in it.
+_MONTHS = (
+    "janvier|f\xe9vrier|mars|avril|mai|juin|juillet|ao\xfbt|septembre|octobre"
+    "|novembre|d\xe9cembre"
+)
+
+# A French date. A day or a year is required, so "le climat de mars" is not one.
+# The numeric form needs both separators, which keeps "3.5" and "12 500" out.
+_FRENCH_DATE_PATTERN = (
+    r"(?i:"
+    rf"\b\d{{1,2}}(?:er)?\s+(?:{_MONTHS})(?:\s+\d{{4}})?"
+    rf"|\b(?:{_MONTHS})\s+\d{{4}}"
+    r"|\b\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}\b"
+    r")"
+)
+
 # Where a capital is required. A person or an organization is named with one in
 # both languages, so the words the model sweeps up in front of a name — "la
 # mairie de Rennes" — are cut, and a span holding no capital at all — "porte le
@@ -427,7 +450,7 @@ def _analyze(unit: TextUnit, language: str, names: bool) -> list[Detection]:
         for result in _analyzer().analyze(unit.text, language=language, context=context)
         # The model's guesses from this call are dropped even in the names pass:
         # `_name_results` makes them again, from text the model can read.
-        if result.entity_type not in _MODEL_TYPES
+        if not _from_model(result)
     ]
     if names:
         results.extend(_name_results(unit, language, context))
@@ -489,8 +512,21 @@ def _name_results(unit: TextUnit, language: str, context: list[str] | None):
         if not line.strip():
             continue
         for result in analyzer.analyze(line, language=language, context=context):
-            if result.entity_type in _MODEL_TYPES:
+            if _from_model(result):
                 yield offset, result
+
+
+def _from_model(result) -> bool:
+    """
+    Whether a result is the NER model's guess rather than a pattern's.
+
+    Which pass a result belongs to is a question of where it came from, not of
+    what it claims to be. The entity type used to stand in for provenance, until
+    the French date pattern started reporting `DATE_TIME` — a type the model
+    also reports — and the whole-text pass threw its results away.
+    """
+    name = (result.recognition_metadata or {}).get(_RECOGNIZER_NAME)
+    return name == _MODEL_RECOGNIZER
 
 
 def name_span(text: str, start: int, end: int) -> tuple[int, int]:
@@ -629,6 +665,21 @@ def _analyzer():
         def validate_result(self, pattern_text: str):
             return nir_key_matches(pattern_text)
 
+    class FrenchDateRecognizer(PatternRecognizer):
+        """French dates, which the French model has no category for.
+
+        `fr_core_news_sm` labels only `LOC`, `MISC`, `ORG` and `PER`, so a date
+        in a French document was never offered and stayed in the anonymized
+        copy. The English model does report dates, hence French only here.
+        """
+
+        def __init__(self):
+            super().__init__(
+                supported_entity="DATE_TIME",
+                patterns=[Pattern("French date", _FRENCH_DATE_PATTERN, 0.6)],
+                supported_language="fr",
+            )
+
     languages = list(LANGUAGES)
     nlp_engine = NlpEngineProvider(
         nlp_configuration={
@@ -646,6 +697,7 @@ def _analyzer():
     )
     for language in languages:
         registry.add_recognizer(NirRecognizer(language))
+    registry.add_recognizer(FrenchDateRecognizer())
 
     return AnalyzerEngine(
         registry=registry, nlp_engine=nlp_engine, supported_languages=languages

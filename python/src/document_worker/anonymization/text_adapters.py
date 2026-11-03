@@ -148,7 +148,8 @@ class _PlainTextAdapter(DocumentAdapter):
 
 
 # A fenced code block, or an HTML comment. Both can span lines, so both are
-# found over the whole document before anything is read line by line.
+# found over the whole document before anything is read line by line. Their
+# content is analyzed like any other text; only their delimiters are not.
 _MARKDOWN_CODE = re.compile(
     r"^[ \t]{0,3}(`{3,}|~{3,})[^\n]*(?:\n|$)"
     r"(?:(?!^[ \t]{0,3}\1)[^\n]*(?:\n|$))*"
@@ -171,8 +172,12 @@ _MARKDOWN_TABLE_RULE = re.compile(r"^[ \t]*\|?[ \t:|-]*-[ \t:|-]*$")
 # for no gain, whereas asterisk emphasis is unambiguous.
 _MARKDOWN_INLINE = re.compile(r"`+[^`\n]*`+|</?[A-Za-z][^>\n]*>|\*{1,3}|~~")
 
-# Code and comments are reported; emphasis and bullets are not worth a note.
+# Reported by the HTML adapter, whose scripts and styles really are skipped.
+# Markdown no longer emits it: it analyzes code and comments like any other text.
 _CODE_NOTE = "markup_code_not_analyzed"
+
+# What opens or closes a fenced code block, at the start of its own line.
+_MARKDOWN_FENCE = re.compile(r"[ \t]{0,3}(?:`{3,}|~{3,})")
 
 
 @dataclass(frozen=True)
@@ -196,15 +201,17 @@ class _MarkdownAdapter(DocumentAdapter):
 
     Not parsed into a tree and not re-rendered — the file is split into the
     stretches that carry content and the stretches that carry structure, and
-    only the first kind reaches the detector or can be written to. That is what
-    makes the promise in the README true: a fenced code block or an HTML
-    comment is read and copied, never analyzed.
+    only the first kind reaches the detector or can be written to.
 
-    Handing the raw file to a model instead, as this adapter first did, costs
-    twice. An email inside a code block is offered for replacement although the
-    documentation says code is not analyzed; and the syntax wrecks the
-    sentences around it, so `**Lieu :** Nantes, salle Loire` yields `salle` as
-    a person and a table cell comes back with its closing pipe in the span.
+    Handing the raw file to a model instead, as this adapter first did, wrecks
+    the sentences: `**Lieu :** Nantes, salle Loire` yields `salle` as a person
+    and a table cell comes back with its closing pipe in the span.
+
+    Content is content wherever it sits. A code block and an HTML comment are
+    delimiters around text, and that text holds addresses and names like the
+    rest of the file — a review note reading "relire avec Sophie Marchand" is
+    exactly what a user anonymizes a document to remove. So their content is
+    analyzed and rewritable, and only their delimiters are structure.
     """
 
     UNIT_ID = "content"
@@ -252,9 +259,36 @@ def _markdown_pieces(text: str):
     """Yield the file's pieces in order, content and structure alike."""
     for chunk, excluded in _split_on(text, _MARKDOWN_CODE):
         if excluded:
-            yield _MarkdownPiece(chunk, False, boundary=True, note=_CODE_NOTE)
+            yield from _markdown_delimited(chunk)
         else:
             yield from _markdown_lines(chunk)
+
+
+def _markdown_delimited(chunk: str):
+    """
+    Split a fenced code block or an HTML comment into delimiters and content.
+
+    The content is yielded as one analyzed piece, newlines and all. The detector
+    reads a unit one line at a time anyway, and keeping the block whole means a
+    replacement lands at its real offset inside the file.
+    """
+    if chunk.startswith("<!--"):
+        yield _MarkdownPiece("<!--", False, boundary=True)
+        # The pattern only matches a closed comment, so the end is always there.
+        if body := chunk[len("<!--") : -len("-->")]:
+            yield _MarkdownPiece(body, True)
+        yield _MarkdownPiece("-->", False, boundary=True)
+        return
+
+    # The opening fence carries the info string — `python` is not prose.
+    opening, *rest = chunk.splitlines(keepends=True)
+    yield _MarkdownPiece(opening, False, boundary=True)
+    # An unterminated block runs to the end of the file and has no closing line.
+    closing = rest.pop() if rest and _MARKDOWN_FENCE.match(rest[-1]) else None
+    if rest:
+        yield _MarkdownPiece("".join(rest), True)
+    if closing:
+        yield _MarkdownPiece(closing, False, boundary=True)
 
 
 def _markdown_lines(chunk: str):
@@ -294,7 +328,13 @@ def _markdown_inline(segment: str):
         if not excluded:
             yield _MarkdownPiece(chunk, True)
         elif chunk.startswith("`"):
-            yield _MarkdownPiece(chunk, False, note=_CODE_NOTE)
+            # A code span's backticks are syntax; what they wrap is text.
+            ticks = len(chunk) - len(chunk.lstrip("`"))
+            body = chunk[ticks:].rstrip("`")
+            yield _MarkdownPiece(chunk[:ticks], False)
+            if body:
+                yield _MarkdownPiece(body, True)
+            yield _MarkdownPiece(chunk[ticks + len(body) :], False)
         else:
             yield _MarkdownPiece(chunk, False)
 
@@ -510,9 +550,13 @@ class _MarkupAdapter(DocumentAdapter):
 
         tag = element.tag
         if not isinstance(tag, str):
-            # A comment or processing instruction. Its own content is never
-            # analyzed, but the text that follows it is part of the flow.
-            notes.append("markup_code_not_analyzed")
+            # A comment or a processing instruction. A comment is prose — a
+            # review note naming someone is exactly what the user is removing —
+            # so it is analyzed and rewritable, on its own line since it sits
+            # between blocks. A processing instruction carries no prose, and
+            # giving it an empty piece costs nothing.
+            pieces.append((None, "\n"))
+            pieces.append(((element, "text"), element.text or ""))
             self._append_tail(element, pieces)
             return
 

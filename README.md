@@ -87,10 +87,12 @@ reported as changed rather than rewritten at the wrong offsets.
 
 Some content is read, or reported, but deliberately left as it is. The app says so per document:
 
-- Code and markup, in Markdown, HTML, XML and JSON — only the text a reader sees is analyzed. In
-  Markdown that means fenced code blocks, inline code spans, HTML comments and raw HTML tags are
-  copied without being read, and the syntax itself — heading markers, emphasis, list bullets, table
-  pipes — is never part of what is analyzed or replaced.
+- Markup itself, in Markdown, HTML, XML and JSON — heading markers, emphasis, list bullets, table
+  pipes, raw HTML tags and the fences and delimiters around a code block or a comment are never
+  analyzed or replaced. What they wrap is: the body of a fenced code block, of an inline code span
+  and of an HTML comment is read and rewritten like any other text, because an address in a snippet
+  and a name in a review note are exactly what anonymizing a document is meant to remove. In HTML,
+  `<script>` and `<style>` contents are the exception and are reported as not analyzed.
 - Values stored inside XML tag attributes.
 - Tracked changes in Word: deleted and inserted text stays, so accepting the revisions later can
   bring personal information back.
@@ -112,16 +114,17 @@ than a verdict, because the detector does get it wrong and you are the one who k
 is a person or a firm. And the shape the detector gets wrong most often — a lone capitalised word
 opening a line or a heading — is ranked under a **Less likely** heading at the bottom rather than
 dropped, because a one-word name in a table cell looks exactly the same. On the sample meeting
-report, that turns thirty-two spans into twenty-four questions, two of them doubtful and grouped at
+report, that turns forty-three spans into thirty-four questions, two of them doubtful and grouped at
 the end.
 
 Names are read one line at a time, not over the whole document. A document is not prose: a heading,
 a paragraph and a table row carry no full stop between them, and a model given all of it at once
 reads one run-on sentence — it loses names in the middle of it and takes the headings for people.
 
-**Dates are not detected in French.** The French model has no date category, so a date is left in
-the copy even though the type menu offers one; the English model does report them. Replace a date
-that matters by hand, in the original, before anonymizing.
+French dates come from a pattern rather than from the model, which has no date category for French.
+The pattern is anchored on the twelve month names, so `2 avril 2026`, `juin 2026` and `18/04/2026`
+are reported and a bare `mars` or a figure in a budget table is not. The English model reports its
+own dates as before.
 
 Names are read by a model for one language, the one shown above the list; patterns such as IBANs
 and email addresses are language-independent. A document read in the wrong language has its names

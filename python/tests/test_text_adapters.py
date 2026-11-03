@@ -111,7 +111,11 @@ class TestMarkdown:
         assert "Lieu :" in unit.text
         assert "Nantes" in unit.text
 
-    def test_a_fenced_code_block_is_not_analyzed_and_is_noted(self, tmp_path):
+    # Code and comments carry personal data like any other text — an address in
+    # a snippet and a name in a review note are exactly the leaks a user is
+    # anonymizing the document to remove. So the rule is the same everywhere:
+    # the delimiters are structure and the content is text.
+    def test_a_fenced_code_block_is_analyzed_without_its_fence(self, tmp_path):
         path = write(
             tmp_path,
             "note.md",
@@ -121,25 +125,52 @@ class TestMarkdown:
         extraction = extract(path)
         [unit] = extraction.units
 
-        assert "admin@novagaia.fr" not in unit.text
-        assert "markup_code_not_analyzed" in extraction.notes
+        assert "admin@novagaia.fr" in unit.text
+        assert "```" not in unit.text
+        assert "python" not in unit.text
+        assert "markup_code_not_analyzed" not in extraction.notes
 
-    def test_an_inline_code_span_is_not_analyzed(self, tmp_path):
+    def test_a_replacement_inside_a_fence_keeps_the_fence(self, tmp_path):
+        content = 'Script :\n\n```python\nOWNER = "admin@novagaia.fr"\n```\n'
+        path = write(tmp_path, "note.md", content)
+        [unit] = extract(path).units
+        start = unit.text.index("admin@novagaia.fr")
+
+        result = run(
+            path,
+            [Edit(unit.id, start, start + len("admin@novagaia.fr"), "[COURRIEL 1]")],
+            tmp_path,
+        ).decode()
+
+        assert '```python\nOWNER = "[COURRIEL 1]"\n```' in result
+
+    def test_an_inline_code_span_is_analyzed_without_its_backticks(self, tmp_path):
         path = write(tmp_path, "note.md", "Écrire à `admin@novagaia.fr` demain.\n")
 
         [unit] = extract(path).units
 
-        assert "admin@novagaia.fr" not in unit.text
+        assert "admin@novagaia.fr" in unit.text
+        assert "`" not in unit.text
         assert "demain" in unit.text
 
-    def test_an_html_comment_is_not_analyzed_and_is_noted(self, tmp_path):
+    def test_an_html_comment_is_analyzed_without_its_delimiters(self, tmp_path):
         path = write(tmp_path, "note.md", "Fin.\n\n<!-- relire avec Marie Vidal -->\n")
 
         extraction = extract(path)
         [unit] = extraction.units
 
+        assert "Marie Vidal" in unit.text
+        assert "<!--" not in unit.text
+        assert "-->" not in unit.text
+
+    def test_an_html_tag_is_still_structure(self, tmp_path):
+        """A tag is markup, not prose: only comments and code change here."""
+        path = write(tmp_path, "note.md", '<div class="Marie Vidal">Fin.</div>\n')
+
+        [unit] = extract(path).units
+
         assert "Marie Vidal" not in unit.text
-        assert "markup_code_not_analyzed" in extraction.notes
+        assert "Fin." in unit.text
 
     # A table cell is a value, and the pipe beside it is not part of it. Feeding
     # the row as one string put the pipe inside the span, so replacing the name
@@ -343,17 +374,34 @@ class TestMarkupText:
 
         assert "Photo de Jean" in extract(path).units[0].text
 
-    # Scripts, styles and comments are not analyzed. Rewriting code by offset
-    # is how a working page becomes a broken one, so they are reported instead.
-    def test_script_style_and_comments_are_excluded_and_reported(self, tmp_path):
+    # Scripts and styles are not analyzed. Rewriting code by offset is how a
+    # working page becomes a broken one, so they are reported instead.
+    def test_script_and_style_are_excluded_and_reported(self, tmp_path):
         path = write(tmp_path, "page.html", self.SAMPLE)
 
         extraction = extract(path)
 
         assert "var a=1" not in extraction.units[0].text
         assert "color:red" not in extraction.units[0].text
-        assert "note" not in extraction.units[0].text
         assert "markup_code_not_analyzed" in extraction.notes
+
+    # A comment is prose, not code: a review note naming someone is exactly
+    # what anonymizing a document is meant to remove, and Markdown already
+    # treats one that way.
+    def test_a_comment_is_analyzed_and_rewritable(self, tmp_path):
+        path = write(
+            tmp_path, "page.html", "<p>Fin</p><!-- relire avec Marie Vidal -->"
+        )
+        [unit] = extract(path).units
+        start = unit.text.index("Marie Vidal")
+
+        result = run(
+            path,
+            [Edit(unit.id, start, start + len("Marie Vidal"), "[PERSONNE 1]")],
+            tmp_path,
+        )
+
+        assert b"<!-- relire avec [PERSONNE 1] -->" in result
 
     def test_an_edit_across_inline_markup_keeps_the_markup(self, tmp_path):
         path = write(tmp_path, "page.html", "<p>Cher <b>Jean</b> Dupont, bonjour</p>")

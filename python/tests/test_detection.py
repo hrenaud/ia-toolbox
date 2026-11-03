@@ -491,6 +491,11 @@ class TestNamesAreReadLineByLine:
 
             def __init__(self, end: int):
                 self.end = end
+                # What marks a result as the model's guess rather than a
+                # pattern's, and so decides which pass keeps it.
+                self.recognition_metadata = {
+                    "recognizer_name": "SpacyRecognizer",
+                }
 
         class Analyzer:
             def analyze(self, text, language, context=None):
@@ -525,6 +530,43 @@ class TestNamesAreReadLineByLine:
         assert all(text[item.start : item.end] == item.text for item in found)
         # The second line, its full stop trimmed off like any other span's.
         assert "Claire Dubois est là" in [item.text for item in found]
+
+
+class TestFrenchDates:
+    """
+    French dates come from a pattern, because the model has no category for one.
+
+    `fr_core_news_sm` labels only `LOC`, `MISC`, `ORG` and `PER`, so no French
+    document ever yielded a date — they stayed in the anonymized copy. A pattern
+    anchored on the twelve month names is tight, not loose: it cannot fire on a
+    figure in a budget table, since a budget table holds no month names.
+    """
+
+    def dates(self, text: str) -> list[str]:
+        return [text[d.start : d.end] for d in typed(detect(text), "DATE_TIME")]
+
+    @pytest.mark.parametrize(
+        "text, expected",
+        [
+            ("Transfert le 2 avril 2026 au plus tard.", "2 avril 2026"),
+            ("Réunion du 14 mars 2026 à Nantes.", "14 mars 2026"),
+            ("Le virement partira avant le 31 mars.", "31 mars"),
+            ("Échéance : juin 2026 pour l'audit.", "juin 2026"),
+            ("Signé le 1er février 2025 en deux exemplaires.", "1er février 2025"),
+            ("Reçu le 18/04/2026 par courrier.", "18/04/2026"),
+            ("Note du 5 AOÛT 2024, relue depuis.", "5 AOÛT 2024"),
+        ],
+    )
+    def test_a_date_is_reported_whole(self, text, expected):
+        assert expected in self.dates(text)
+
+    def test_a_bare_month_is_not_a_date(self):
+        """Without a day or a year, "mars" is the month, not a date."""
+        assert self.dates("Le climat de mars reste doux cette année.") == []
+
+    def test_a_figure_in_a_table_is_not_a_date(self):
+        """A pattern that fired here would make the review screen unusable."""
+        assert self.dates("| Budget | 12 500 | 3.5 | 44000 |") == []
 
 
 class TestFrench:

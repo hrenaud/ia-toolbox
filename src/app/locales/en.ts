@@ -176,7 +176,7 @@ export const en = {
   "anonymization.status.error": "Error",
   // Content the adapters read but do not rewrite, keyed by the worker's note code
   "anonymization.note.markup_code_not_analyzed":
-    "Code and markup in this document were not analyzed, only the text a reader sees.",
+    "Script and style contents in this document were not analyzed.",
   "anonymization.note.xml_attributes_not_analyzed":
     "Values stored inside tags were not analyzed, only the text between them.",
   "anonymization.note.tracked_changes_not_rewritten":
