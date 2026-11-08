@@ -388,8 +388,12 @@ def detect(units: Iterable[TextUnit], language: str | None = None) -> list[Detec
             it.
 
     Returns:
-        Detections with overlaps resolved, ordered by unit then position.
+        Detections with overlaps resolved, ordered by unit then position. The
+        cells of a column of personal data come back as one detection each,
+        whether anything was found in them or not.
     """
+    from document_worker.anonymization.columns import type_columns
+
     # Read once: the language is decided from the whole document before the
     # first unit is analyzed, and `units` is only promised to be iterable.
     analyzed = [unit for unit in units if unit.text.strip()]
@@ -402,10 +406,14 @@ def detect(units: Iterable[TextUnit], language: str | None = None) -> list[Detec
             found.extend(_analyze(unit, pass_language, names=pass_language == language))
     # The excerpt is attached last, once the spans are final: widening an
     # address or dropping an overlap changes what the user is being shown.
-    return [
+    detected = [
         replace(item, excerpt=excerpt(texts[item.unit_id], item.start, item.end))
         for item in merge_addresses(resolve_overlaps(found), texts)
     ]
+    # And a column is decided after that, from the spans it ends up with. Its
+    # cells carry their own excerpt, which is why it comes after rather than
+    # before: the words around a cell are the cells beside it.
+    return type_columns(analyzed, detected)
 
 
 def resolve_overlaps(detections: Iterable[Detection]) -> list[Detection]:

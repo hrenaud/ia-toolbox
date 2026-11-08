@@ -292,6 +292,7 @@ it("carries an analysis back whole", async () => {
         text: "Marie Lefebvre",
         likely: true,
         excerpt: "…signé par Marie Lefebvre le 3…",
+        column: false,
       },
     ],
     notes: [],

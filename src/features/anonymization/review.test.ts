@@ -11,6 +11,7 @@ import {
   PIPELINE_ERROR_CODES,
   anonymizedName,
   confidenceWord,
+  columnPreview,
   describeAnonymizationError,
   detectionKey,
   groupByValue,
@@ -36,8 +37,22 @@ function detection(fields: Partial<Detection> = {}): Detection {
     text: "Jean Dupont",
     likely: true,
     excerpt: "…dossier de Jean Dupont est transféré…",
+    column: false,
     ...fields,
   };
+}
+
+/** One cell of a column the worker typed as a whole. */
+function cell(text: string, start: number): Detection {
+  return detection({
+    unit_id: "column-0",
+    start,
+    end: start + text.length,
+    text,
+    excerpt: text,
+    score: 1,
+    column: true,
+  });
 }
 
 function unit(fields: Partial<AnalyzedUnit> = {}): AnalyzedUnit {
@@ -225,6 +240,62 @@ describe("grouping", () => {
     const second = detectionKey(detection({ start: 6, end: 10 }));
 
     expect(first).not.toBe(second);
+  });
+});
+
+/**
+ * A column of a table is one decision, not one per cell: every cell in it
+ * holds the same kind of value, which is why the worker types the column as a
+ * whole. Eight names in a column were eight rows asking the same question, and
+ * the one the model missed was not among them at all.
+ */
+describe("a column is one row", () => {
+  it("collapses every cell of a column into a single row", () => {
+    const rows = groupByValue([
+      cell("Claire Dubois", 0),
+      cell("Marc Lefèvre", 14),
+      cell("Sophie Marchand", 27),
+    ]);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].column).toBe(true);
+    expect(rows[0].detections).toHaveLength(3);
+  });
+
+  it("keys a column by its column, so one choice retypes all of it", () => {
+    expect(valueKey(cell("Claire Dubois", 0))).toBe(
+      valueKey(cell("Marc Lefèvre", 14)),
+    );
+  });
+
+  /** The same name in prose is still its own question, in its own place. */
+  it("keeps a name found in prose out of the column's row", () => {
+    const rows = groupByValue([
+      cell("Claire Dubois", 0),
+      detection({ text: "Claire Dubois", start: 0, end: 13 }),
+    ]);
+
+    expect(rows).toHaveLength(2);
+  });
+
+  it("previews the first values so the user can judge the type", () => {
+    const row = groupByValue([
+      cell("Claire Dubois", 0),
+      cell("Marc Lefèvre", 14),
+    ])[0];
+
+    expect(columnPreview(row)).toBe("Claire Dubois, Marc Lefèvre");
+  });
+
+  /** The row has to stay readable: a column can hold thousands of cells. */
+  it("stops the preview after a few values and says there are more", () => {
+    const row = groupByValue(
+      ["Un", "Deux", "Trois", "Quatre", "Cinq", "Six"].map((text, index) =>
+        cell(text, index * 10),
+      ),
+    )[0];
+
+    expect(columnPreview(row)).toBe("Un, Deux, Trois, Quatre…");
   });
 });
 

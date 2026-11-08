@@ -158,6 +158,7 @@ export const fr: Record<keyof typeof en, string> = {
   "anonymization.selectAll": "Tout sélectionner",
   "anonymization.clearAll": "Ne rien sélectionner",
   "anonymization.occurrences": "{count} fois dans le document",
+  "anonymization.columnCells": "colonne entière, {count} cellules",
   "anonymization.lessLikely": "Moins probables",
   "anonymization.lessLikelyHelp":
     "Un seul mot, en début de ligne ou de titre : c’est souvent un mot ordinaire que le détecteur a pris pour un nom. Vérifiez avant de cocher.",

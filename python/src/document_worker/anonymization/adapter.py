@@ -28,12 +28,14 @@ class MappedUnit:
         location: str,
         context: tuple[str, ...] = (),
         rewritable: bool = True,
+        cells: tuple[tuple[int, int], ...] = (),
     ):
         self.id = unit_id
         self.text_map = text_map
         self.location = location
         self.context = context
         self.rewritable = rewritable
+        self.cells = cells
 
 
 class DocumentAdapter:
@@ -50,6 +52,7 @@ class DocumentAdapter:
                     unit.location,
                     unit.context,
                     unit.rewritable,
+                    unit.cells,
                 )
                 for unit in document.units
             ],

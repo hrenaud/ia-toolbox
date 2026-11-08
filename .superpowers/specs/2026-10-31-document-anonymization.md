@@ -524,6 +524,35 @@ deviations:
   of that value when the payload is built, because the type decides the label
   the copy carries. The row shows the first occurrence with a few words of the
   document either side — "Loire" alone is a question nobody can answer.
+- **A column of a table is one row, and is replaced whole.** Added after the
+  per-value design was tried on a membership directory in CSV. A column is not
+  prose: every cell in it holds the same kind of value, which is a stronger
+  claim than anything a detector can make about one cell. Two consequences, both
+  improvements. The copy stops leaking — the model found names in six cells of a
+  column and missed the seventh, which stayed in the copy and was never offered,
+  and nobody can untick a row that was never shown. And the review stops
+  repeating itself: eight names in a column were eight identical questions, now
+  one row whose menu retypes every cell at once. Fifty-two spans became twelve
+  questions on that file. Decided in the worker (`anonymization/columns.py`) by
+  two measurements that are both required: **fill**, how much of a cell its
+  detections cover averaged only over the cells where something was found — so
+  it measures "these cells are values" without measuring recall, which is the
+  whole point — and **reach**, how many non-empty cells hold anything at all.
+  Fill alone accepts a column of reference codes with one name in it; reach
+  alone accepts a column of comments that each mention somebody. Thresholds
+  (0.6 and 0.5) sit in the middle of the gap measured on the sample directory.
+  The qualifying column's original sub-cell detections are dropped in favour of
+  one per non-empty cell: two edits over one cell would overlap and `TextMap.plan`
+  would refuse the write, and nothing leaks because every cell is replaced whole.
+  Carried to the UI by one additive `column` flag on the detection; the kept
+  payload is unchanged, since the frontend rebuilds it from offsets.
+  **CSV and TSV only.** The cell spans are reported by the adapter rather than
+  derived, because a quoted CSV cell can contain the newline the cells are joined
+  with. XLSX is out of scope for now: `_OoxmlAdapter` is a rules engine over XML
+  tags with no notion of a grid, a workbook's text normally lives in
+  `xl/sharedStrings.xml` where one string serves many cells (already reported as
+  `xlsx_shared_strings_reused`), and recognizing a column there means parsing the
+  sheet grid (`<c r="C4" t="s">`) and de-duplicating shared strings first.
 - **Bulk selection is per entity type only, not per unit.** ~~A unit is an
   internal part id; grouping the screen by both type and unit would mean two
   competing hierarchies over the same rows.~~ **Superseded**: with the grouping

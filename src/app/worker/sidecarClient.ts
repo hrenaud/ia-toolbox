@@ -55,6 +55,12 @@ export interface Detection extends KeptDetection {
    * word opening a line. The review screen ranks those last.
    */
   likely: boolean;
+  /**
+   * True for one cell of a column the worker typed as a whole. The review
+   * screen collapses every cell of that column into a single row on this flag,
+   * because the decision is about the column, not the cell.
+   */
+  column: boolean;
 }
 
 export type WorkerResult =
@@ -151,7 +157,8 @@ function isAnalysis(value: Record<string, unknown>): boolean {
         typeof found.score === "number" &&
         typeof found.text === "string" &&
         typeof found.likely === "boolean" &&
-        typeof found.excerpt === "string",
+        typeof found.excerpt === "string" &&
+        typeof found.column === "boolean",
     ) &&
     isCodeList(value.notes)
   );

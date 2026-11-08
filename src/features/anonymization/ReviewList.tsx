@@ -4,6 +4,7 @@ import { describeLocation } from "./locationLabels";
 import type { ValueRow } from "./review";
 import {
   ENTITY_TYPES,
+  columnPreview,
   confidenceWord,
   detectionKey,
   groupByValue,
@@ -83,21 +84,35 @@ export function ReviewList({
     );
     // One place, or none: naming the first of several would be wrong.
     const place = places.size === 1 ? [...places][0] : "";
-    const confidence = showsConfidence(entityType)
-      ? t[
-          `anonymization.confidence.${confidenceWord(
-            Math.max(...row.detections.map((found) => found.score)),
-          )}` as keyof Translations
-        ]
-      : "";
-    const times =
-      row.detections.length > 1
+    // A column row is about the column, so the column is what it is called,
+    // and the values it will replace are the evidence underneath. Naming the
+    // first of eight names would be describing the row by one of its answers.
+    const label = row.column && place ? place : row.text;
+    const excerpt = row.column ? columnPreview(row) : row.excerpt;
+    // Nothing to report about a column: the evidence is the column itself, not
+    // the characters, so the score is ours and saying "high" would be circular.
+    const confidence =
+      showsConfidence(entityType) && !row.column
+        ? t[
+            `anonymization.confidence.${confidenceWord(
+              Math.max(...row.detections.map((found) => found.score)),
+            )}` as keyof Translations
+          ]
+        : "";
+    const times = row.column
+      ? t["anonymization.columnCells"].replace(
+          "{count}",
+          String(row.detections.length),
+        )
+      : row.detections.length > 1
         ? t["anonymization.occurrences"].replace(
             "{count}",
             String(row.detections.length),
           )
         : "";
-    const meta = [confidence, place, times].filter(Boolean).join(" · ");
+    const meta = [confidence, row.column ? "" : place, times]
+      .filter(Boolean)
+      .join(" · ");
 
     // A value the format cannot rewrite is shown and not offered: hiding it
     // would be the user's only sign that it is in the file. Its type is not
@@ -105,11 +120,11 @@ export function ReviewList({
     if (keys.length === 0) {
       return (
         <li className="review-item frozen" key={key}>
-          <span className="review-text">{row.text}</span>
+          <span className="review-text">{label}</span>
           <span className="review-meta">
             {[typeLabel(entityType), meta].filter(Boolean).join(" · ")}
           </span>
-          {row.excerpt && <span className="review-excerpt">{row.excerpt}</span>}
+          {excerpt && <span className="review-excerpt">{excerpt}</span>}
           <span className="review-badge">
             {t["anonymization.notRewritable"]}
           </span>
@@ -128,13 +143,13 @@ export function ReviewList({
             checked={keys.every((one) => selected.has(one))}
             onChange={() => toggleRow(keys)}
           />
-          <span className="review-text">{row.text}</span>
+          <span className="review-text">{label}</span>
           {meta && <span className="review-meta">{meta}</span>}
         </label>
-        {row.excerpt && <span className="review-excerpt">{row.excerpt}</span>}
+        {excerpt && <span className="review-excerpt">{excerpt}</span>}
         <select
           className="review-type"
-          aria-label={t["anonymization.typeOf"].replace("{value}", row.text)}
+          aria-label={t["anonymization.typeOf"].replace("{value}", label)}
           value={entityType}
           onChange={(event) => onTypeChange(key, event.target.value)}
         >

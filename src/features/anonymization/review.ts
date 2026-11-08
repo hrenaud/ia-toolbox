@@ -70,6 +70,28 @@ export interface ValueRow {
   excerpt: string;
   detections: Detection[];
   likely: boolean;
+  /**
+   * True when the row is a whole column of a table rather than one value. The
+   * row then holds one detection per cell, all of one type, and the screen
+   * names the column instead of naming the first of its values.
+   */
+  column: boolean;
+}
+
+/** How many of a column's values the row shows before it gets unreadable. */
+const PREVIEW_CELLS = 4;
+
+/**
+ * The first few values of a column, so the user can judge the type.
+ *
+ * This is what makes a whole-column decision answerable: the row says "this
+ * column is names" and the preview is the evidence, including the cell the
+ * model missed — which is the one the user could never see before.
+ */
+export function columnPreview(row: ValueRow): string {
+  const values = row.detections.map((detection) => detection.text);
+  const shown = values.slice(0, PREVIEW_CELLS).join(", ");
+  return values.length > PREVIEW_CELLS ? `${shown}…` : shown;
 }
 
 /** Identify one detection within one analysis, for selection state. */
@@ -120,6 +142,10 @@ export function showsConfidence(entityType: string): boolean {
  * asked about her twice, under two headings, both times claiming to be sure.
  * One value is one question; the type is a proposal the user can correct.
  *
+ * A column of a table is one row for a stronger reason: the worker typed the
+ * column as a whole, so the row holds every one of its cells and the user's
+ * answer covers all of them at once.
+ *
  * A value is ranked low only when every occurrence of it is: found once in the
  * middle of a sentence, it is a real value that also happens to open a line
  * somewhere else. Below that, rows keep the worker's type order, so the rows
@@ -140,6 +166,7 @@ export function groupByValue(detections: Detection[]): ValueRow[] {
         excerpt: detection.excerpt,
         detections: [detection],
         likely: detection.likely,
+        column: detection.column,
       });
     }
   }
@@ -156,8 +183,14 @@ export function groupByValue(detections: Detection[]): ValueRow[] {
  * The page counts rows with this and holds the user's type choices under it,
  * so the count it announces, the rows the user reads and the type they pick are
  * all the same thing.
+ *
+ * A cell of a typed column is keyed by its column instead. Every cell in a
+ * column holds the same kind of value, so the question is about the column:
+ * eight names were eight identical rows, and one choice now retypes all of
+ * them — including the cell the model missed, which no row ever offered.
  */
 export function valueKey(detection: Detection): string {
+  if (detection.column) return `column:${detection.unit_id}`;
   return detection.text.trim().toLocaleLowerCase();
 }
 

@@ -27,13 +27,28 @@ function detection(fields: Partial<Detection> = {}): Detection {
     text: "Jean Dupont",
     likely: true,
     excerpt: "…dossier de Jean Dupont est transféré…",
+    column: false,
     ...fields,
   };
+}
+
+/** One cell of a column the worker typed as a whole. */
+function cell(text: string, start: number): Detection {
+  return detection({
+    unit_id: "column-0",
+    start,
+    end: start + text.length,
+    text,
+    excerpt: text,
+    score: 1,
+    column: true,
+  });
 }
 
 const units: AnalyzedUnit[] = [
   { id: "content", location: "document_body", rewritable: true },
   { id: "formulas", location: "sheet_formulas:Ventes", rewritable: false },
+  { id: "column-0", location: "column:Nom du contact", rewritable: true },
 ];
 
 /** Render with selection and type choices owned outside, as the page owns them. */
@@ -234,6 +249,85 @@ describe("ReviewList", () => {
     );
 
     expect(screen.getByText(/Formules de la feuille Ventes/)).toBeVisible();
+  });
+
+  /**
+   * A column of a table is one decision. Eight names in a column were eight
+   * identical questions, and the ninth — the one the model missed — was not
+   * asked at all; now the whole column is replaced, so it is covered too.
+   */
+  describe("a column of a table", () => {
+    const cells = [
+      cell("Claire Dubois", 0),
+      cell("Marc Lefèvre", 14),
+      cell("Le Guen", 27),
+    ];
+
+    it("asks once, naming the column rather than a value", () => {
+      render(<Harness detections={cells} />);
+
+      const [box] = screen.getAllByRole("checkbox");
+      expect(screen.getAllByRole("checkbox")).toHaveLength(1);
+      expect(box).toHaveAccessibleName(
+        expect.stringContaining("Colonne « Nom du contact »"),
+      );
+    });
+
+    it("shows the values it will replace, including the missed one", () => {
+      render(<Harness detections={cells} />);
+
+      expect(
+        screen.getByText("Claire Dubois, Marc Lefèvre, Le Guen"),
+      ).toBeVisible();
+    });
+
+    it("says how many cells the choice covers", () => {
+      render(<Harness detections={cells} />);
+
+      expect(screen.getAllByRole("checkbox")[0]).toHaveAccessibleName(
+        expect.stringContaining(
+          fr["anonymization.columnCells"].replace("{count}", "3"),
+        ),
+      );
+    });
+
+    it("selects every cell of the column with one tick", async () => {
+      const onChange = vi.fn();
+      render(<Harness detections={cells} onChange={onChange} />);
+
+      await userEvent.click(screen.getAllByRole("checkbox")[0]);
+
+      expect(onChange).toHaveBeenCalledWith(new Set(cells.map(detectionKey)));
+    });
+
+    it("retypes the whole column from one menu", async () => {
+      const onTypeChange = vi.fn();
+      render(<Harness detections={cells} onTypeChange={onTypeChange} />);
+
+      await userEvent.selectOptions(
+        screen.getByRole("combobox"),
+        "ORGANIZATION",
+      );
+
+      expect(onTypeChange).toHaveBeenCalledWith(
+        valueKey(cells[0]),
+        "ORGANIZATION",
+      );
+    });
+
+    /** The evidence is the column, not the characters: not ours to score. */
+    it("claims no confidence about a column", () => {
+      render(
+        <Harness
+          detections={[cell("a@b.fr", 0), cell("c@d.fr", 10)].map((found) => ({
+            ...found,
+            entity_type: "EMAIL_ADDRESS",
+          }))}
+        />,
+      );
+
+      expect(screen.queryByText(/Certitude/)).toBeNull();
+    });
   });
 
   it("shows nothing at all when the documents were clean", () => {

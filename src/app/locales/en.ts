@@ -151,6 +151,7 @@ export const en = {
   "anonymization.selectAll": "Select everything",
   "anonymization.clearAll": "Select nothing",
   "anonymization.occurrences": "{count} times in the document",
+  "anonymization.columnCells": "whole column, {count} cells",
   "anonymization.lessLikely": "Less likely",
   "anonymization.lessLikelyHelp":
     "One word, opening a line or a heading: often an ordinary word the detector took for a name. Check before ticking.",

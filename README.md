@@ -70,10 +70,12 @@ include.
 2. **Find personal information.** Each document is read and what was found is listed, one row per
    value: the value, a few words of the document either side of its first occurrence, where it is,
    and how many times it appears. The language the names were read in is shown above the list and
-   can be corrected, which reads the document again.
+   can be corrected, which reads the document again. A column of a CSV or TSV file is a single row
+   instead, named after its header, showing the first of its values.
 3. **Choose what to replace.** Each row proposes a type — person name, organization, place, email
    address, phone number, IBAN, payment card number, French social security number, date — in a
-   menu you can change: your answer applies to every occurrence of that value. Then tick the rows
+   menu you can change: your answer applies to every occurrence of that value, or to every cell of
+   the column. Then tick the rows
    to replace. Nothing is selected at the start, and nothing is written until you confirm. Text the
    format cannot rewrite without breaking the document is shown for information and offers no
    choice.
@@ -116,6 +118,19 @@ opening a line or a heading — is ranked under a **Less likely** heading at the
 dropped, because a one-word name in a table cell looks exactly the same. On the sample meeting
 report, that turns forty-three spans into thirty-three questions, two of them doubtful and grouped
 at the end.
+
+**A column of a table is typed as a whole.** In a CSV or TSV file, when most cells of a column hold
+personal information, the column gets one type and every one of its cells is replaced — including
+the cells the detector never flagged. That is not a convenience: a model that finds a name in six
+cells of a column and misses the seventh left that seventh name in the copy and never offered it for
+review, and nobody can untick a row that was never shown. It also makes the list far shorter: on the
+sample membership directory, fifty-two spans become twelve questions, nine of them whole columns.
+Two conditions are both required before a column is typed this way — its cells have to be mostly
+personal information rather than sentences that mention some, and most of them have to hold any at
+all. A column of free-text comments stays a list of separate values. If a column is typed wrongly,
+the menu on its row retypes every cell at once; the row shows its first values so you can see what
+will be replaced. Columns inside an Excel workbook are **not** typed this way yet: its text is
+stored in a shared string table with no notion of a grid, so a column cannot be recognized there.
 
 Names are read one line at a time, not over the whole document. A document is not prose: a heading,
 a paragraph and a table row carry no full stop between them, and a model given all of it at once

@@ -373,18 +373,26 @@ class _DelimitedAdapter(DocumentAdapter):
         units = []
         for column, name in enumerate(header):
             pieces: list[tuple[Any, str]] = []
+            # Where each cell sits in the column's text, tracked as the text is
+            # built: a cell may contain the newline the cells are joined with,
+            # so the spans cannot be recovered from the finished string.
+            cells: list[tuple[int, int]] = []
+            offset = 0
             for index, row in enumerate(rows[1:], start=1):
                 if pieces:
                     pieces.append((None, "\n"))
-                pieces.append(
-                    ((index, column), row[column] if column < len(row) else "")
-                )
+                    offset += 1
+                value = row[column] if column < len(row) else ""
+                cells.append((offset, offset + len(value)))
+                pieces.append(((index, column), value))
+                offset += len(value)
             units.append(
                 MappedUnit(
                     f"column-{column}",
                     TextMap.build(pieces),
                     f"column:{name}" if name else f"column_number:{column + 1}",
                     context=(name,) if name else (),
+                    cells=tuple(cells),
                 )
             )
 

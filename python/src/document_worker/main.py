@@ -121,6 +121,7 @@ def process_anonymization(request):
                         "text": found.text,
                         "likely": found.likely,
                         "excerpt": found.excerpt,
+                        "column": found.column,
                     }
                     for found in analysis.detections
                 ],

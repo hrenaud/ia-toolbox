@@ -282,6 +282,34 @@ class TestDelimitedText:
 
         assert unit_texts(extract(path)) == ["", ""]
 
+    # Where each cell starts and ends, so a column can be typed and replaced as
+    # a whole rather than cell by cell. Only a tabular adapter reports this.
+    def test_a_column_reports_the_span_of_each_of_its_cells(self, tmp_path):
+        path = write(tmp_path, "contacts.csv", self.SAMPLE)
+
+        [unit] = extract(path).units[:1]
+
+        assert [unit.text[start:end] for start, end in unit.cells] == [
+            "Dupont, Jean",
+            "Marie",
+        ]
+
+    def test_a_cell_holding_a_newline_is_still_one_cell(self, tmp_path):
+        """Splitting the column's text on newlines would cut this one in two."""
+        path = write(tmp_path, "contacts.csv", 'nom\n"Jean\nDupont"\nMarie\n')
+
+        [unit] = extract(path).units
+
+        assert [unit.text[start:end] for start, end in unit.cells] == [
+            "Jean\nDupont",
+            "Marie",
+        ]
+
+    def test_a_missing_cell_is_reported_as_an_empty_span(self, tmp_path):
+        path = write(tmp_path, "contacts.csv", "nom,courriel\nJean\n")
+
+        assert extract(path).units[1].cells == ((0, 0),)
+
 
 class TestJson:
     SAMPLE = '{"nom": "Jean Dupont", "age": 42, "contacts": ["jean@example.fr"]}'

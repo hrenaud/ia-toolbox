@@ -29,6 +29,11 @@ class TextUnit:
             "courriel" lifts recall far above what its values alone give.
         rewritable: False for text that is read and reported but never written
             back, such as a string literal inside a spreadsheet formula.
+        cells: The span of each cell, for a unit that is a column of a table.
+            Empty for everything else, which is how a column is recognised.
+            Reported rather than derived: a quoted CSV cell may hold the
+            newline the cells are joined with, so splitting the text on
+            newlines would cut it in two.
     """
 
     id: str
@@ -36,6 +41,7 @@ class TextUnit:
     location: str
     context: tuple[str, ...] = ()
     rewritable: bool = True
+    cells: tuple[tuple[int, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -53,6 +59,9 @@ class Detection:
         excerpt: The value with a few words either side, on one line, elided
             with "…" where it was cut. "Loire" alone is a question nobody can
             answer; "salle Loire — locaux de" is a room.
+        column: True for one cell of a column typed as a whole. The review
+            screen collapses every cell of that column into a single row on
+            this flag, because the decision is about the column, not the cell.
     """
 
     unit_id: str
@@ -63,6 +72,7 @@ class Detection:
     text: str
     likely: bool = True
     excerpt: str = ""
+    column: bool = False
 
 
 @dataclass(frozen=True)

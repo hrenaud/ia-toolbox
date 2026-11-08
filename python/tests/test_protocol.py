@@ -406,6 +406,28 @@ def test_a_detection_carries_the_text_around_it(tmp_path):
     assert all(item["excerpt"] for item in event["detections"])
 
 
+def test_a_column_typed_as_a_whole_says_so(tmp_path):
+    """
+    The review screen collapses a column into one row on this flag, so it has
+    to survive the trip. A column of names is one decision, not one per cell.
+    """
+    source = tmp_path / "contacts.csv"
+    source.write_text(
+        "nom,montant\nClaire Dubois,42\nMarc Lefèvre,7\nSophie Marchand,13\n",
+        encoding="utf-8",
+    )
+
+    event = messages(request("analyze", input_path=str(source)))[-1]
+
+    names = [item for item in event["detections"] if item["unit_id"] == "column-0"]
+    assert [item["text"] for item in names] == [
+        "Claire Dubois",
+        "Marc Lefèvre",
+        "Sophie Marchand",
+    ]
+    assert all(item["column"] for item in names)
+
+
 def test_a_document_the_anonymizer_cannot_rewrite_is_refused(tmp_path):
     """A PDF converts and cannot be anonymized, and the worker says so."""
     source = tmp_path / "report.pdf"
