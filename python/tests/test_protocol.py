@@ -1,13 +1,24 @@
 import json
 import subprocess
 import sys
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
+from document_worker.protocol import KeptDetection, RequestError, parse_request
+
 
 def request(operation="list_formats", **fields):
     return {"id": str(uuid4()), "operation": operation, **fields}
+
+
+# A folder and a file that exist nowhere but are absolute on the platform the
+# tests run on. `parse_request` checks the paths before the payload, so a
+# POSIX literal made every payload test fail on Windows as `invalid_path`:
+# "/tmp/dossier.txt" has no drive letter and is therefore not absolute there.
+A_FOLDER = Path(Path.cwd().anchor) / "tmp"
+A_FILE = A_FOLDER / "dossier.txt"
 
 
 # Scripts that monkeypatch the converter have to import markitdown at the top,
@@ -161,6 +172,273 @@ def test_structured_file_errors_preserve_existing_files(tmp_path, failure):
     assert output.read_text() == "existing output"
 
 
+class TestAnonymizationRequests:
+    """
+    Request validation for the two anonymization operations.
+
+    Checked in process rather than through the worker: these are decisions
+    ``parse_request`` makes before anything is read, and a subprocess per case
+    would pay for two spaCy models to prove a dictionary key is missing.
+
+    The rule is the one the paths already follow — anything that is not exactly
+    right is ``invalid_request``, never a traceback — applied to a payload whose
+    offsets will be used to rewrite a document.
+    """
+
+    def accepted(self, operation, **fields):
+        return parse_request(json.dumps(request(operation, **fields)))
+
+    def refused(self, operation, **fields):
+        with pytest.raises(RequestError) as failure:
+            self.accepted(operation, **fields)
+        return failure.value.code
+
+    def test_the_anonymization_catalog_needs_no_path(self):
+        parsed = self.accepted("list_anonymization_formats")
+
+        assert parsed.input_path is None
+        assert parsed.output_directory is None
+
+    def test_analyze_has_an_input_and_no_output_folder(self):
+        """Analysis writes nothing, so demanding an output folder is a lie."""
+        parsed = self.accepted("analyze", input_path=str(A_FILE))
+
+        assert parsed.input_path == A_FILE
+        assert parsed.output_directory is None
+
+    def test_analyze_still_needs_its_input(self):
+        assert self.refused("analyze") == "invalid_path"
+
+    def test_analyze_takes_a_language_to_read_the_document_in(self):
+        """The review screen sends it back when the user corrects the guess."""
+        parsed = self.accepted("analyze", input_path=str(A_FILE), language="en")
+
+        assert parsed.language == "en"
+
+    def test_analyze_without_a_language_leaves_it_to_the_worker(self):
+        """Absent is not "French": the worker has to guess, and then say so."""
+        parsed = self.accepted("analyze", input_path=str(A_FILE))
+
+        assert parsed.language is None
+
+    def test_analyze_refuses_a_language_there_is_no_model_for(self):
+        assert (
+            self.refused("analyze", input_path=str(A_FILE), language="de")
+            == "invalid_request"
+        )
+
+    def test_anonymize_carries_paths_payload_and_choices(self):
+        parsed = self.accepted(
+            "anonymize",
+            input_path=str(A_FILE),
+            output_directory=str(A_FOLDER),
+            operator="mask",
+            language="en",
+            detections=[
+                {"unit_id": "content", "start": 3, "end": 17, "entity_type": "PERSON"}
+            ],
+        )
+
+        assert parsed.operator == "mask"
+        assert parsed.language == "en"
+        assert parsed.detections == (KeptDetection("content", 3, 17, "PERSON"),)
+
+    def test_the_defaults_are_replace_in_french(self):
+        """Replace is the recommended operator, and this is a French product."""
+        parsed = self.accepted(
+            "anonymize",
+            input_path=str(A_FILE),
+            output_directory=str(A_FOLDER),
+            detections=[],
+        )
+
+        assert (parsed.operator, parsed.language) == ("replace", "fr")
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {},
+            {"detections": "content"},
+            {"detections": [[]]},
+            {"detections": [{"unit_id": "content", "start": 0, "end": 4}]},
+            {"detections": [{"unit_id": 7, "start": 0, "end": 4, "entity_type": "X"}]},
+            {"detections": [{"unit_id": "", "start": 0, "end": 4, "entity_type": "X"}]},
+            {
+                "detections": [
+                    {"unit_id": "c", "start": -1, "end": 4, "entity_type": "X"}
+                ]
+            },
+            {
+                "detections": [
+                    {"unit_id": "c", "start": 4, "end": 4, "entity_type": "X"}
+                ]
+            },
+            {
+                "detections": [
+                    {"unit_id": "c", "start": 5, "end": 4, "entity_type": "X"}
+                ]
+            },
+            {
+                "detections": [
+                    {"unit_id": "c", "start": 0.5, "end": 4, "entity_type": "X"}
+                ]
+            },
+            {
+                "detections": [
+                    {"unit_id": "c", "start": True, "end": 4, "entity_type": "X"}
+                ]
+            },
+            {"detections": [{"unit_id": "c", "start": 0, "end": 4, "entity_type": ""}]},
+            {"detections": [], "operator": "encrypt"},
+            {"detections": [], "operator": None},
+            {"detections": [], "language": "de"},
+        ],
+    )
+    def test_a_payload_that_is_not_exactly_right_is_refused(self, payload):
+        code = self.refused(
+            "anonymize",
+            input_path=str(A_FILE),
+            output_directory=str(A_FOLDER),
+            **payload,
+        )
+
+        assert code == "invalid_request"
+
+    def test_a_refusal_carries_the_request_id_and_nothing_else(self):
+        """The UI needs to know which request failed; it needs no echo of it."""
+        item = request(
+            "anonymize",
+            input_path=str(A_FILE),
+            output_directory=str(A_FOLDER),
+            detections=[{"unit_id": "secret-unit", "start": 0, "end": 4}],
+        )
+
+        with pytest.raises(RequestError) as failure:
+            parse_request(json.dumps(item))
+
+        assert failure.value.request_id == item["id"]
+        assert "secret-unit" not in failure.value.message
+
+
+def test_the_anonymization_catalog_is_its_own_list():
+    """
+    Announcing a format the anonymizer cannot rewrite is the worst failure here.
+
+    The two workflows' catalogs are independent: PDF converts to Markdown and
+    cannot be rewritten in place, so it must be absent from this one.
+    """
+    item = request("list_anonymization_formats")
+
+    event = messages(item)[-1]
+
+    assert event["event"] == "formats"
+    extensions = [entry["extension"] for entry in event["items"]]
+    assert ".docx" in extensions
+    assert ".pdf" not in extensions
+
+
+def test_analyze_then_anonymize_is_one_round_trip_each(tmp_path):
+    """The worker keeps no state between the two: the second request carries it."""
+    source = tmp_path / "dossier.txt"
+    source.write_text("Transmis à Marie Lefebvre.\n", encoding="utf-8")
+
+    analysis = request("analyze", input_path=str(source))
+    first = messages(analysis)[-1]
+    assert first["status"] == "success", first
+    assert first["notes"] == []
+    assert [unit["location"] for unit in first["units"]] == ["document"]
+    found = next(
+        item for item in first["detections"] if item["text"] == "Marie Lefebvre"
+    )
+    assert found["entity_type"] == "PERSON"
+    assert 0 < found["score"] <= 1
+
+    anonymization = request(
+        "anonymize",
+        input_path=str(source),
+        output_directory=str(tmp_path),
+        detections=[
+            {
+                "unit_id": found["unit_id"],
+                "start": found["start"],
+                "end": found["end"],
+                "entity_type": found["entity_type"],
+            }
+        ],
+    )
+    second = messages(anonymization)[-1]
+    assert second["status"] == "success", second
+    assert second["output_path"] == str(tmp_path / "dossier-anonymise.txt")
+    assert (
+        Path(second["output_path"]).read_text(encoding="utf-8")
+        == "Transmis à [PERSONNE 1].\n"
+    )
+    assert source.read_text(encoding="utf-8") == "Transmis à Marie Lefebvre.\n"
+
+
+def test_the_language_is_reported_and_can_be_overridden(tmp_path):
+    """
+    The guess travels back, and a correction travels in.
+
+    A document read by the wrong model is a document whose names are all
+    wrong, and the worker cannot tell: only the user sees that. So the guess
+    is shown rather than hidden, and the same request takes the answer.
+    """
+    source = tmp_path / "dossier.txt"
+    source.write_text("Le dossier de Marie Lefebvre est transféré.\n", encoding="utf-8")
+
+    guessed = messages(request("analyze", input_path=str(source)))[-1]
+    assert guessed["language"] == "fr"
+    assert "Marie Lefebvre" in [item["text"] for item in guessed["detections"]]
+
+    forced = messages(request("analyze", input_path=str(source), language="en"))[-1]
+    assert forced["language"] == "en"
+
+
+def test_a_detection_carries_the_text_around_it(tmp_path):
+    """The review screen asks about a value in context, not in isolation."""
+    source = tmp_path / "dossier.txt"
+    source.write_text("Réunion dans la salle Loire à 14 heures.\n", encoding="utf-8")
+
+    event = messages(request("analyze", input_path=str(source)))[-1]
+
+    assert event["detections"], event
+    assert all(item["excerpt"] for item in event["detections"])
+
+
+def test_a_column_typed_as_a_whole_says_so(tmp_path):
+    """
+    The review screen collapses a column into one row on this flag, so it has
+    to survive the trip. A column of names is one decision, not one per cell.
+    """
+    source = tmp_path / "contacts.csv"
+    source.write_text(
+        "nom,montant\nClaire Dubois,42\nMarc Lefèvre,7\nSophie Marchand,13\n",
+        encoding="utf-8",
+    )
+
+    event = messages(request("analyze", input_path=str(source)))[-1]
+
+    names = [item for item in event["detections"] if item["unit_id"] == "column-0"]
+    assert [item["text"] for item in names] == [
+        "Claire Dubois",
+        "Marc Lefèvre",
+        "Sophie Marchand",
+    ]
+    assert all(item["column"] for item in names)
+
+
+def test_a_document_the_anonymizer_cannot_rewrite_is_refused(tmp_path):
+    """A PDF converts and cannot be anonymized, and the worker says so."""
+    source = tmp_path / "report.pdf"
+    source.write_bytes(b"%PDF-1.4\n")
+
+    event = messages(request("analyze", input_path=str(source)))[-1]
+
+    assert event["status"] == "error"
+    assert event["error_code"] == "unsupported_format"
+
+
 def test_output_filename_is_numbered_when_occupied(tmp_path):
     """When <stem>.md exists, create <stem> (2).md instead of erroring."""
     source = tmp_path / "source.txt"
@@ -168,9 +446,7 @@ def test_output_filename_is_numbered_when_occupied(tmp_path):
     existing = tmp_path / "source.md"
     existing.write_text("existing output")
 
-    item = request(
-        "convert", input_path=str(source), output_directory=str(tmp_path)
-    )
+    item = request("convert", input_path=str(source), output_directory=str(tmp_path))
     event = messages(item)[-1]
 
     # Should succeed, not error

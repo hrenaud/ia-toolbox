@@ -5,7 +5,6 @@ import { dictionaries, type Locale } from "../../app/i18n";
 import {
   loadSupportedFormats,
   startConversion,
-  stopClient,
   type ConversionJob,
   type FormatInfo,
 } from "./conversionApi";
@@ -35,21 +34,33 @@ export function ConversionPage({ locale }: ConversionPageProps) {
   const shouldFocusError = useRef(false);
   const t = dictionaries[locale];
 
-  // Load supported formats on mount
+  // Load supported formats on mount. The worker is not stopped on unmount: it
+  // is shared with anonymization and outlives this page, so switching workflow
+  // would kill the process the next page is about to ask for. `AppShell` owns
+  // its lifetime.
   useEffect(() => {
+    // Under StrictMode the first mount is discarded, and the shell's cleanup
+    // stops the shared worker while this request is still in flight. The flag
+    // is what keeps that rejection from reaching a page that no longer exists,
+    // which showed up as a "restart the app" banner at every dev launch, above
+    // the formats the second mount had loaded fine.
+    let cancelled = false;
+
     loadSupportedFormats()
       .then((loaded) => {
+        if (cancelled) return;
         setFormats(loaded);
         setFormatsLoaded(true);
       })
       .catch((err) => {
+        if (cancelled) return;
         console.error("Failed to load formats:", err);
         setError(t["conversion.formatLoadError"]);
         setFormatsLoaded(true);
       });
 
     return () => {
-      void stopClient();
+      cancelled = true;
     };
   }, [t]);
 

@@ -51,6 +51,25 @@ def process_request(request):
             "items": items,
         }
         return
+    if request.operation == "list_anonymization_formats":
+        # A separate catalog on purpose: a format that converts to Markdown is
+        # not necessarily one we can rewrite in place.
+        from document_worker.anonymization.formats import (
+            supported_anonymization_formats,
+        )
+
+        yield {
+            "id": request.id,
+            "event": "formats",
+            "items": [
+                {"extension": fmt.extension, "label": fmt.label}
+                for fmt in supported_anonymization_formats()
+            ],
+        }
+        return
+    if request.operation in ("analyze", "anonymize"):
+        yield from process_anonymization(request)
+        return
     source, directory = request.input_path, request.output_directory
     yield {"id": request.id, "event": "progress", "percent": 0}
     # Output isolation is installed before importing any conversion libraries.
@@ -67,6 +86,65 @@ def process_request(request):
         "status": "success",
         "output_path": result.output_path,
     }
+
+
+def process_anonymization(request):
+    """Run one analysis or one anonymization, reporting progress around it."""
+    yield {"id": request.id, "event": "progress", "percent": 0}
+    # Output isolation is installed before importing detection: loading the
+    # language models writes to the real stdout and stderr.
+    from document_worker.anonymization import pipeline
+    from document_worker.anonymization.model import AdapterError
+
+    try:
+        if request.operation == "analyze":
+            analysis = pipeline.analyze_file(
+                request.input_path, language=request.language
+            )
+            payload = {
+                "language": analysis.language,
+                "units": [
+                    {
+                        "id": unit.id,
+                        "location": unit.location,
+                        "rewritable": unit.rewritable,
+                    }
+                    for unit in analysis.units
+                ],
+                "detections": [
+                    {
+                        "unit_id": found.unit_id,
+                        "start": found.start,
+                        "end": found.end,
+                        "entity_type": found.entity_type,
+                        "score": found.score,
+                        "text": found.text,
+                        "likely": found.likely,
+                        "excerpt": found.excerpt,
+                        "column": found.column,
+                    }
+                    for found in analysis.detections
+                ],
+                "notes": list(analysis.notes),
+            }
+        else:
+            written = pipeline.anonymize_file(
+                request.input_path,
+                request.output_directory,
+                request.detections,
+                operator=request.operator,
+                language=request.language,
+            )
+            payload = {
+                "output_path": str(written.output_path),
+                "notes": list(written.notes),
+            }
+    except AdapterError as error:
+        yield error_result(request.id, error.code, error.message)
+        return
+
+    yield {"id": request.id, "event": "progress", "percent": 100}
+    yield {"id": request.id, "event": "result", "status": "success", **payload}
 
 
 def main():

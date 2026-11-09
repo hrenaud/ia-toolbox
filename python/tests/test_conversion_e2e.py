@@ -169,10 +169,7 @@ def _write_xls(path: Path) -> None:
         + record(0x0000, struct.pack("<HHHH", 0, 0, 2, 1))
         + record(
             0x0004,
-            struct.pack("<HH", 0, 0)
-            + blank_attributes
-            + bytes([len(label)])
-            + label,
+            struct.pack("<HH", 0, 0) + blank_attributes + bytes([len(label)]) + label,
         )
         + record(
             0x0003,

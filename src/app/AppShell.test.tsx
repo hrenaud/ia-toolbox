@@ -3,9 +3,13 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { AppShell } from "./AppShell";
 import * as conversionApi from "../features/conversion/conversionApi";
+import * as anonymizationApi from "../features/anonymization/anonymizationApi";
+import { stopClient } from "./worker/sharedClient";
 
 // Mock the conversion API
 vi.mock("../features/conversion/conversionApi");
+vi.mock("../features/anonymization/anonymizationApi");
+vi.mock("./worker/sharedClient");
 
 // Mock Tauri dialog and webview
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -33,6 +37,9 @@ beforeEach(() => {
       requiresOptionalComponent: false,
     },
   ]);
+  vi.mocked(anonymizationApi.loadAnonymizationFormats).mockResolvedValue([
+    { extension: ".docx", label: "Word document" },
+  ]);
 });
 
 it("renders named navigation and selected workflow content", async () => {
@@ -45,7 +52,22 @@ it("renders named navigation and selected workflow content", async () => {
   expect(
     screen.getByRole("heading", { level: 1, name: "Anonymize documents" }),
   ).toBeVisible();
-  expect(screen.getByRole("status")).toHaveTextContent("not available");
+  // The workflow shows its own page, not a placeholder.
+  expect(
+    await screen.findByRole("button", { name: "Select files" }),
+  ).toBeVisible();
+});
+
+it("keeps the shared worker alive across workflows and stops it on shutdown", async () => {
+  const user = userEvent.setup();
+  const view = render(<AppShell />);
+  await user.click(screen.getByRole("button", { name: "Anonymize documents" }));
+  await user.click(screen.getByRole("button", { name: "Convert to Markdown" }));
+  // One worker serves both workflows. A page that stopped it on its way out
+  // would kill the process the next page is about to ask for.
+  expect(stopClient).not.toHaveBeenCalled();
+  view.unmount();
+  expect(stopClient).toHaveBeenCalled();
 });
 
 it("opens a labelled settings dialog, closes on Escape and returns focus", async () => {
